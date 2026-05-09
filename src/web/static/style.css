@@ -1047,29 +1047,6 @@ input[type="checkbox"] {
     font-size: 1rem;
 }
 
-.footer-links .sponsor-btn {
-    color: #db61a2;
-    font-weight: 600;
-}
-
-.footer-links .sponsor-btn:hover {
-    color: #f472b6;
-}
-
-html.dark .footer-links .sponsor-btn {
-    color: #f472b6;
-}
-
-html.dark .footer-links .sponsor-btn:hover {
-    color: #f9a8d4;
-}
-
-@keyframes heartbeat {
-    0%, 100% { transform: scale(1); }
-    10%, 30% { transform: scale(1.1); }
-    20%, 40% { transform: scale(1); }
-}
-
 /* ========================================
    TTS Section
    ======================================== */
