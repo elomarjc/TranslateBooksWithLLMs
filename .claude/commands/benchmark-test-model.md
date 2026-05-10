@@ -1,14 +1,25 @@
-# Benchmark a model end-to-end: {{arg1}} / {{arg2}}
+# Benchmark a model end-to-end: {{arg1}} / {{arg2}} [{{arg3}}]
 
-Run the full TBL benchmark on a single model: produce translations on the 8
-canonical pairs, manually evaluate per the rubric, and apply the scores.
+Run the full TBL benchmark on a single model: produce translations on a
+canonical pair set, manually evaluate per the rubric, and apply the scores.
 
 **Args:**
 - `{{arg1}}` = provider (`ollama`, `poe`, `openrouter`, or `openai`)
 - `{{arg2}}` = model id (e.g. `gemma3:27b`, `gemini-3-flash-preview`, `mistral-medium-3.1`, `gpt-5-mini`)
+- `{{arg3}}` = (optional) pair set: `quick` (8 pairs, default), `standard`
+  (16 pairs), or `full` (28 pairs). See `benchmark/canonical_pairs.py` and
+  `docs/BENCHMARK_WORKFLOW.md` for the lists and rationale.
 
-If either argument is missing or invalid, ask the user for the correct value
-via AskUserQuestion **before** running anything.
+If `{{arg1}}` or `{{arg2}}` is missing/invalid, ask the user via
+AskUserQuestion before running. If `{{arg3}}` is missing, default to
+`quick`. If `{{arg3}}` is provided but isn't one of `quick|standard|full`,
+ask the user to pick.
+
+Volume / time expectations:
+
+- `quick`   → ~45 translations,  ~10 min judge time
+- `standard` → ~125 translations, ~30 min judge time
+- `full`    → ~245 translations, ~60 min judge time
 
 ---
 
@@ -55,10 +66,13 @@ For OpenRouter and OpenAI-compatible endpoints, the check uses each provider's
 
 ## Step 3 — Produce translations
 
+Resolve the pair set: if `{{arg3}}` is empty, use `quick`. Otherwise pass
+`{{arg3}}` through to `--pair-set` (one of `quick`, `standard`, `full`).
+
 Run via Bash:
 
 ```
-python -m benchmark.cli run -p {{arg1}} -m {{arg2}} --no-evaluate --pairs en:zh-Hans en:es en:fr en:vi ja:en ko:en zh-Hans:en ja:zh-Hans
+python -m benchmark.cli run -p {{arg1}} -m {{arg2}} --no-evaluate --pair-set <quick|standard|full>
 ```
 
 Wait for it to complete. Extract the `<RUN_ID>` from the line:

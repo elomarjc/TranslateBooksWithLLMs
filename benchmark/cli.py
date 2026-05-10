@@ -155,7 +155,23 @@ def cmd_run(args: argparse.Namespace) -> int:
     # Determine pairs / language codes
     pairs: Optional[list[tuple[str, str]]] = None
     language_codes: Optional[list[str]] = None
-    if getattr(args, "pairs", None):
+    pair_set_name = getattr(args, "pair_set", None)
+    if pair_set_name:
+        if getattr(args, "pairs", None):
+            log_callback("error", "--pair-set and --pairs are mutually exclusive.")
+            return 1
+        from benchmark.canonical_pairs import get_pair_set
+        try:
+            pairs = get_pair_set(pair_set_name)
+        except KeyError as exc:
+            log_callback("error", str(exc))
+            return 1
+        print(colored(
+            f"Running benchmark on canonical '{pair_set_name}' set ({len(pairs)} pair(s)): "
+            f"{', '.join(f'{s}:{t}' for s, t in pairs)}",
+            Colors.CYAN,
+        ))
+    elif getattr(args, "pairs", None):
         pairs = []
         for spec in args.pairs:
             if ":" not in spec:
@@ -1081,7 +1097,15 @@ Examples:
         nargs="+",
         metavar="SRC:TGT",
         help="Explicit (source:target) language pairs, e.g. 'en:zh-Hans en:fr ja:en'. "
-             "Overrides --languages and --full. Texts are filtered by `source_language`.",
+             "Overrides --languages and --full. Texts are filtered by `source_language`. "
+             "Mutually exclusive with --pair-set.",
+    )
+    run_parser.add_argument(
+        "--pair-set",
+        choices=["quick", "standard", "full"],
+        help="Use a canonical pair set defined in benchmark/canonical_pairs.py: "
+             "'quick' (8 pairs), 'standard' (16 pairs), 'full' (28 pairs). "
+             "Mutually exclusive with --pairs.",
     )
     run_parser.add_argument(
         "--no-evaluate",

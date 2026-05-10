@@ -131,19 +131,75 @@ contributors who pull and use Claude Code will see the same slash commands.
 
 ---
 
-## The 8 canonical Quick pairs
+## The canonical pair sets
 
-Every model is benchmarked on this same set of language pairs (chosen via a
-market study of real user demand — see chat history for sources):
+Three fixed tiers live in [benchmark/canonical_pairs.py](../benchmark/canonical_pairs.py)
+and are addressable via `--pair-set quick|standard|full`. Each is a
+**unidirectional** set: we pick the direction with strongest real-world
+demand for each language and never include both `en→fr` and `fr→en`.
 
+### Quick (8 pairs) — the default
+
+Fast iteration on a new model. ~45 translations, ~10 min judge time.
+
+```text
+en:zh-Hans  en:es  en:fr  en:vi  ja:en  ko:en  zh-Hans:en  ja:zh-Hans
 ```
-en:zh-Hans   en:es   en:fr   en:vi
-ja:en   ko:en   zh-Hans:en   ja:zh-Hans
-```
 
-For Phase 1 (translation), pass them as `--pairs` exactly. Don't substitute
-without justification — comparability across models depends on this set staying
-fixed.
+Rationale (from the market study at v2 launch):
+
+- `en→zh-Hans`: #1 real demand — Chinese users importing foreign content.
+- `en→es`: 500M+ speakers, high-volume baseline.
+- `en→fr`: quality baseline (DeepL excellent here, useful comparison point).
+- `en→vi`: underserved by mainstream tools, growing market.
+- `ja→en`: manga / light novel community.
+- `ko→en`: k-literature surge (+285% in 2024).
+- `zh-Hans→en`: Chinese webnovel / academic flow.
+- `ja→zh-Hans`: documented manga industry flow into China.
+
+### Standard (16 pairs) — recommended default for thorough evaluation
+
+Quick + 8 outbound English to major target languages. ~125 translations,
+~30 min judge time.
+
+Adds: `en→{de, pt, ja, ko, ru, it, ar, hi}`.
+
+Covers the major Indo-European, East Asian, Semitic, and Indo-Aryan
+language families. Use this when you want a benchmark that's representative
+of real general-purpose translation usage.
+
+### Full (28 pairs) — deep evaluation
+
+Standard + 12 broad-coverage additions for linguistic diversity and
+underserved markets. ~245 translations, ~60 min judge time.
+
+Adds:
+
+- European diversity: `en→{nl, pl, sv, da, el, tr}`
+- Asian gaps (DeepL doesn't have these): `en→{th, id, bn, ta}`
+- RTL: `en→he`
+- Cross-Asian: `zh-Hans→ja` (Chinese light novels into Japanese)
+
+Use this for a thorough benchmark when budget allows — useful to surface
+weaknesses on rare scripts (Bengali, Tamil), agglutinative languages
+(Turkish), and underserved markets.
+
+### Custom pair sets
+
+For one-off experiments, use `--pairs SRC:TGT [SRC:TGT ...]` instead of
+`--pair-set`. The two flags are mutually exclusive. Custom sets don't
+contribute comparable data to the wiki — submitted runs should use one of
+the three canonical tiers if they're meant to be aggregated alongside
+others.
+
+### Choosing a tier
+
+| Goal | Tier |
+|---|---|
+| Validate a new model quickly, iterate on prompts | quick |
+| Add a model to the wiki on the most demanded pairs | standard |
+| Deep dive on a frontier model, surface weaknesses | full |
+| Re-run the same model on more languages later | resume with `--pair-set <larger>` (translations from the smaller set are skipped) |
 
 ---
 
