@@ -106,29 +106,141 @@ Tell the user:
   when the model was strong on European pairs).
 - Updated overall average across the **whole** run (old + new combined).
 
-Then propose the next steps:
+Hand off to step 8 — don't print copy-paste commands. The next steps walk
+the user through publication interactively.
 
-```
-# 1. Inspect the existing submission for this model
+---
+
+## Step 8 — Confirm and submit
+
+Ask via `AskUserQuestion`:
+
+- Question: "Submit the expanded run as a benchmark observation?"
+- Header: "Submit"
+- Options:
+  - "Yes — submit now" (Recommended)
+  - "No — stop here"
+
+If "No" → end the skill. The expanded run JSON stays in
+`benchmark_results/{{arg1}}.json`.
+
+If "Yes", first check whether an older submission exists for this model
+slug. Run via Bash:
+
+```bash
 ls benchmark/data/submissions/ | grep <model-slug>
-
-# 2. Either delete the old (smaller) submission, or keep it as a separate
-#    observation. Deleting is cleaner — the new submission supersedes it.
-rm benchmark/data/submissions/<old-date>_<user>_<model-slug>.json
-
-# 3. Submit the expanded run
-python -m benchmark.cli submit benchmark_results/{{arg1}}.json --by github:<user> --provider <provider> --judge-id <judge-id>
-
-# 4. Republish the wiki
-/benchmark-publish-wiki
 ```
+
+If one or more match, ask the user via `AskUserQuestion` whether to:
+
+- Question: "Replace the older submission for this model? (Cleaner — the
+  new submission supersedes it.)"
+- Header: "Old sub"
+- Options:
+  - "Yes — delete the old submission first" (Recommended)
+  - "No — keep both as separate observations"
+
+Then run the submit:
+
+```bash
+python -m benchmark.cli submit benchmark_results/{{arg1}}.json --by github:<user> --provider <provider> --judge-id <judge-id>
+```
+
+If the user chose "Replace", `rm` the old submission file BEFORE running
+submit. Capture the new submission file path.
+
+If submit fails, report the error and **stop**.
+
+---
+
+## Step 9 — Rerank affected triples
+
+The expanded run adds the model to triples it didn't cover before. If those
+triples already had ≥1 other model, ranking is meaningful — apply rerank to
+enforce rubric §5.
+
+Run via Bash:
+
+```bash
+python scripts/dump_for_rerank.py --touching <model-id> --out plan/rerank_{{arg1}}.md
+```
+
+If the script reports "No triples need rerank", skip to step 10.
+
+Otherwise, ask via `AskUserQuestion`:
+
+- Question: "Rerank N triples to enforce dispersion (§5)?"
+- Header: "Rerank"
+- Options:
+  - "Yes — open the brief and rerank" (Recommended)
+  - "No — skip"
+
+If "Yes", read the brief in full. For each triple, assign new `overall`
+scores enforcing ≥0.3 between adjacent ranks. Don't touch
+accuracy/fluency/style. Write the JSON reply to
+`plan/rerank_{{arg1}}_reply.json`.
+
+Then apply:
+
+```bash
+python scripts/apply_rerank.py plan/rerank_{{arg1}}_reply.json
+```
+
+This patches the affected submission files in place. The original `overall`
+values stay in git history. The env-level `judge_id` of touched submissions
+gains a `-reranked` suffix.
+
+---
+
+## Step 10 — Commit and push
+
+Ask via `AskUserQuestion`:
+
+- Question: "Commit and push the new submission (and rerank changes) to `main`?"
+- Header: "Push"
+- Options:
+  - "Yes — commit + push" (Recommended)
+  - "No — stop here"
+
+If "No" → end the skill.
+
+If "Yes", stage:
+
+- The new submission file from step 8
+- The deleted old submission (if "Replace" was chosen)
+- Any submission files patched by step 9
+
+Then commit + push:
+
+```bash
+git add benchmark/data/submissions/
+git commit -m "submit(benchmark): extend <model> to <tier> (judge: <judge-id>)"
+git push origin main
+```
+
+If push fails, report the error and stop. Don't proceed to step 11.
+
+---
+
+## Step 11 — Publish the wiki
+
+Ask via `AskUserQuestion`:
+
+- Question: "Republish the wiki now?"
+- Header: "Wiki"
+- Options:
+  - "Yes — run /benchmark-publish-wiki" (Recommended)
+  - "No — skip"
+
+If "Yes", instruct the user to invoke `/benchmark-publish-wiki` next.
 
 ---
 
 ## Important guardrails
 
-- **Don't auto-submit.** This skill stops at the report; the user picks
-  whether to replace the old submission, keep both, or discard.
+- **Always confirm via `AskUserQuestion`** before each user-visible action:
+  submit, replace-old, rerank, commit + push, wiki publish. Stop at any
+  "No" answer.
 - **Don't shrink the tier.** Going `full → standard` would not "remove"
   translations; it'd just produce no new ones. The runner ignores
   shrinkage gracefully but it's a no-op.
@@ -136,3 +248,5 @@ python -m benchmark.cli submit benchmark_results/{{arg1}}.json --by github:<user
   Claude Opus 4.7, score the new pairs with the same judge to keep the
   data internally consistent. To rejudge with a stronger model, use
   `/benchmark-rescore-submission` instead.
+- **The rerank only touches `overall`.** Accuracy/fluency/style stay
+  intact — only the relative ranking is corrected.

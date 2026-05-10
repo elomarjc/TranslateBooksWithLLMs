@@ -14,10 +14,10 @@ The skill is **idempotent**: re-running with no new submissions just confirms
 
 ## Step 1 — Sanity check the working tree
 
-Run via Bash:
+Run via Bash from the repo root:
 
 ```
-cd "c:/Users/Bruno/Documents/GitHub/TranslateBookWithLLM" && git branch --show-current && git status -s | head -20
+git branch --show-current && git status -s | head -20
 ```
 
 If on a feature branch, ask the user whether to switch to `main` first
@@ -83,12 +83,14 @@ benchmarked model.
 
 ## Step 5 — Clone wiki + sync content
 
+Derive the wiki URL from the current repo's `origin`:
+
 ```
-rm -rf .wiki_repo_archive && git clone https://github.com/hydropix/TranslateBookWithLLM.wiki.git .wiki_repo_archive
+WIKI_URL=$(git remote get-url origin | sed 's/\.git$//').wiki.git
+rm -rf .wiki_repo_archive && git clone "$WIKI_URL" .wiki_repo_archive
 ```
 
-The wiki repo URL above is the canonical one (note: singular `Book`, even
-though the main repo is plural `Books`).
+(On Windows, use the PowerShell equivalent or run the two commands manually.)
 
 If the clone fails ("repository not found"), inform the user that the wiki
 needs at least one page created via the GitHub UI before automated tools can
@@ -127,7 +129,7 @@ git commit -m "Publish v2 benchmark wiki: <N> models, <Q> languages" && git push
 Replace `<N>` and `<Q>` with the actual values from Step 3's stats.
 
 If the push fails:
-- **403/permission denied** → Bruno needs to authenticate. Tell him to
+- **403/permission denied** → the user needs to authenticate. Tell them to
   ensure `git push` works from this clone interactively, or to set up a
   credential helper.
 - **non-fast-forward** → someone else pushed to the wiki between Step 5 and
@@ -137,8 +139,10 @@ If the push fails:
 
 ## Step 7 — Cleanup local artefacts
 
+From the repo root:
+
 ```
-cd "c:/Users/Bruno/Documents/GitHub/TranslateBookWithLLM" && rm -rf wiki/ benchmark_results/aggregated.json
+rm -rf wiki/ benchmark_results/aggregated.json
 ```
 
 Don't `rm -rf .wiki_repo_archive` — Windows sometimes refuses while the
@@ -154,7 +158,7 @@ Tell the user:
 - The number of models and languages now live on the wiki.
 - Whether `Conflicts >= 2 obs` was non-zero (means median aggregation
   kicked in for some triples).
-- The wiki URL: https://github.com/hydropix/TranslateBookWithLLM/wiki
+- The wiki URL (derive from origin: `<origin-url-without-.git>/wiki`).
 - A reminder, if `WIKI_PUSH_TOKEN` isn't set in the repo secrets, that
   configuring it would automate this step in CI.
 

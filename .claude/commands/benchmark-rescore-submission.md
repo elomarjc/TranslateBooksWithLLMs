@@ -6,7 +6,7 @@ calls are made for translation, only for evaluation.
 
 **Args:**
 - `{{arg1}}` = path to the submission JSON to rescore (e.g.
-  `benchmark/data/submissions/2026-05-09_hydropix_gemma3-27b.json`)
+  `benchmark/data/submissions/2026-05-09_<user>_gemma3-27b.json`)
 
 If `{{arg1}}` is missing, list available submissions and ask the user which to
 rescore via `AskUserQuestion`:
@@ -130,25 +130,104 @@ Plus:
 
 ---
 
-## Step 8 — Suggest the new submission
+## Step 8 — Confirm and submit the rescore
 
-The output of this skill is a re-scored run, not a submission. Suggest the
-copy-pasteable next command:
+Ask via `AskUserQuestion`:
 
-```
+- Question: "Submit the rescore as a second observation? (`<original-submitter>` / `<original-provider>` / new judge `<new-judge-id>`)"
+- Header: "Submit"
+- Options:
+  - "Yes — submit now" (Recommended)
+  - "No — stop here"
+
+`<original-submitter>` and `<original-provider>` come from the source submission
+read at step 2.
+
+If "No" → end the skill. The rescored run JSON stays in `benchmark_results/`.
+
+If "Yes", run:
+
+```bash
 python -m benchmark.cli submit benchmark_results/<RUN_ID>.json \
   --by github:<original-submitter> \
   --provider <original-provider> \
   --judge-id <new-judge-id>
 ```
 
-Where `<original-submitter>` and `<original-provider>` come from the source
-submission (you read those in Step 2). The new submission file lands next to
-the old one in `benchmark/data/submissions/` with a fresh date stamp. The
-aggregator will surface both observations on the wiki: same `(model, text,
-target_lang)` triple, `n_obs=2`, median scores.
+The new file lands next to the original in `benchmark/data/submissions/`
+with a fresh date stamp. The aggregator surfaces both observations
+(`n_obs=2`, median scores).
 
-**Don't auto-submit.** The user reviews the report first.
+If submit fails, report and stop.
+
+---
+
+## Step 9 — Rerank if applicable
+
+The new judge may have produced different overall scores than the existing
+ones, opening up dispersion violations on triples with multiple models.
+
+Run via Bash:
+
+```bash
+python scripts/dump_for_rerank.py --out plan/rerank_<RUN_ID>.md
+```
+
+If the script reports "No triples need rerank", skip to step 10.
+
+Otherwise, ask via `AskUserQuestion`:
+
+- Question: "Rerank N triples to enforce dispersion (§5)?"
+- Header: "Rerank"
+- Options:
+  - "Yes — open the brief and rerank" (Recommended)
+  - "No — skip"
+
+If "Yes", read the brief, write `plan/rerank_<RUN_ID>_reply.json` with new
+`overall` per triple (≥0.3 between adjacent ranks). Then:
+
+```bash
+python scripts/apply_rerank.py plan/rerank_<RUN_ID>_reply.json
+```
+
+This patches the affected submission files in place. Touched submissions
+get `-reranked` appended to their env-level `judge_id`.
+
+---
+
+## Step 10 — Commit and push
+
+Ask via `AskUserQuestion`:
+
+- Question: "Commit and push the new submission (and rerank changes) to `main`?"
+- Header: "Push"
+- Options:
+  - "Yes — commit + push" (Recommended)
+  - "No — stop here"
+
+If "Yes":
+
+```bash
+git add benchmark/data/submissions/
+git commit -m "rescore(benchmark): <model-slug> with <new-judge-id>"
+git push origin main
+```
+
+If push fails, report and stop.
+
+---
+
+## Step 11 — Publish the wiki
+
+Ask via `AskUserQuestion`:
+
+- Question: "Republish the wiki now?"
+- Header: "Wiki"
+- Options:
+  - "Yes — run /benchmark-publish-wiki" (Recommended)
+  - "No — skip"
+
+If "Yes", instruct the user to invoke `/benchmark-publish-wiki` next.
 
 ---
 
@@ -156,8 +235,11 @@ target_lang)` triple, `n_obs=2`, median scores.
 
 - **Don't re-translate.** This skill never invokes a translation provider.
   The model outputs are read from the submission verbatim.
-- **The judge_id format is `<judge-model>-rubric-v<n>`.** Always.
-- **Use TodoWrite** to track the 8 steps.
+- **The judge_id format is `<judge-model>-rubric-v<n>`.** Reranks append
+  `-reranked` (idempotent).
+- **Always confirm via `AskUserQuestion`** before each user-visible action:
+  submit, rerank, commit + push, wiki publish. Stop at any "No" answer.
+- **The rerank only touches `overall`.** Accuracy/fluency/style stay intact.
 - **The rubric version must match what the judge applied.** If you ever
   bump the rubric to v2, the new submissions will be `*-rubric-v2` and the
   aggregator will treat them as a separate series on the wiki.

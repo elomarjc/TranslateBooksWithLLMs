@@ -198,10 +198,132 @@ Generate a final report for the user with:
 4. **Top 3 best** translations (with eval_id, text_id, target_lang).
 5. **Top 3 worst** translations (with eval_id, text_id, target_lang).
 6. **Notable failure modes** detected across the run (e.g. "consistent botanical errors on Wilde", "hallucinated place name in KO→EN").
-7. **Next-step suggestion** with copy-pasteable command:
-   ```
-   python -m benchmark.cli submit benchmark_results/<RUN_ID>.json --by github:hydropix --provider {{arg1}} --judge-id <judge-id>
-   ```
+7. **Hand off to Step 9** — don't print the submit command, the next steps
+   will run it interactively.
+
+---
+
+## Step 9 — Confirm and submit
+
+Ask via `AskUserQuestion`:
+
+- Question: "Submit this run as a benchmark observation?"
+- Header: "Submit"
+- Options:
+  - "Yes — submit now" (Recommended)
+  - "No — stop here"
+
+If "No" → end the skill. The run JSON stays in `benchmark_results/` for
+later. Tell the user the exact submit command they can run manually.
+
+If "Yes", run:
+
+```
+python -m benchmark.cli submit benchmark_results/<RUN_ID>.json --by github:<user> --provider {{arg1}} --judge-id <judge-id>
+```
+
+Capture the path printed by the command — it lands in
+`benchmark/data/submissions/<DATE>_<USER>_<MODEL-SLUG>.json`. If `submit`
+fails (no scored results, schema invalid, etc.), report the error and
+**stop**. Don't continue to step 10.
+
+If the user's GitHub username isn't known yet, ask via `AskUserQuestion`
+before running submit (header "GitHub user", required).
+
+---
+
+## Step 10 — Rerank affected triples
+
+The new submission may add `{{arg2}}` to triples already covered by other
+models. If so, ranking becomes meaningful — apply rerank to enforce
+rubric §5 (≥0.3 between adjacent overall ranks).
+
+Run via Bash:
+
+```bash
+python scripts/dump_for_rerank.py --touching {{arg2}} --out plan/rerank_<RUN_ID>.md
+```
+
+If the script reports "No triples need rerank", skip to step 11.
+
+Otherwise, ask via `AskUserQuestion`:
+
+- Question: "Rerank N triples to enforce dispersion (§5)?"
+- Header: "Rerank"
+- Options:
+  - "Yes — open the brief and rerank" (Recommended)
+  - "No — skip"
+
+If "Yes", read the brief in full. For each triple, see all model outputs
+side by side and assign new `overall` scores enforcing ≥0.3 between adjacent
+ranks. **Don't touch accuracy/fluency/style** — those are absolute judgments,
+the rerank only corrects ranking. Write the JSON reply to
+`plan/rerank_<RUN_ID>_reply.json`.
+
+Then apply:
+
+```bash
+python scripts/apply_rerank.py plan/rerank_<RUN_ID>_reply.json
+```
+
+This patches the affected submission files in place. The original `overall`
+values stay in git history. The env-level `judge_id` of touched submissions
+gains a `-reranked` suffix (idempotent).
+
+If "No" → skip the rerank but proceed to step 11. The wiki ranking will
+likely show ties on these triples.
+
+---
+
+## Step 11 — Commit and push
+
+Ask via `AskUserQuestion`:
+
+- Question: "Commit and push the new submission to `main`?"
+- Header: "Push"
+- Options:
+  - "Yes — commit + push" (Recommended)
+  - "No — stop here"
+
+If "No" → end the skill. The submission file is on disk, untracked. Tell
+the user to commit it later.
+
+If "Yes", run sequentially:
+
+```
+git add benchmark/data/submissions/<NEW_FILE>
+git commit -m "submit(benchmark): {{arg2}} via {{arg1}} (judge: <judge-id>)"
+git push origin main
+```
+
+Stage **only** the new submission file — never `git add -A`. If the working
+tree has unrelated changes (`git status` showed them at any point), warn the
+user before committing and ask whether to include them.
+
+If push fails (auth, rejected, behind remote), report exact error and stop
+— don't proceed to step 11.
+
+---
+
+## Step 12 — Publish the wiki
+
+Ask via `AskUserQuestion`:
+
+- Question: "Republish the wiki now to surface the new submission?"
+- Header: "Wiki"
+- Options:
+  - "Yes — run /benchmark-publish-wiki" (Recommended)
+  - "No — skip (auto workflow may catch up)"
+
+If "Yes", tell the user:
+
+> Run `/benchmark-publish-wiki` next. It validates, aggregates, regenerates
+> and pushes the wiki. Idempotent.
+
+(Don't inline its commands — keep wiki publishing in its dedicated skill.)
+
+If "No", remind them that the auto `publish-wiki.yml` GitHub Action will
+republish on the next merge to `main` provided `WIKI_PUSH_TOKEN` is set.
 
 ---
 
@@ -221,10 +343,15 @@ This forces visible spread in the wiki tables and prevents flattening.
 
 ## Important guardrails
 
-- **The 8 canonical pairs are fixed.** Don't substitute. Comparability across
-  models depends on this set staying the same.
+- **The canonical pair sets are fixed.** Don't substitute. Comparability
+  across models depends on the tier (`quick`/`standard`/`full`) staying
+  intact.
 - **The judge_id format is `<judge-model>-rubric-v<n>`.** Don't deviate.
-- **Use TodoWrite** to track the 8 steps as you proceed (validate → translate
-  → dump → score → write JSON → apply → report).
-- **Don't auto-submit.** The skill stops at the report. The user decides
-  whether to commit and submit separately.
+  Reranks append `-reranked` (idempotent).
+- **Always confirm via `AskUserQuestion`** before each user-visible action:
+  submit, rerank, commit + push, wiki publish. Never silently take any of
+  these steps.
+- **Stop at any "No" answer.** Don't try to guess the user meant "later" —
+  they may have spotted something wrong in the report or rerank.
+- **The rerank only touches `overall`.** Accuracy/fluency/style stay as
+  scored at step 7 (those are absolute observations, not relative).
