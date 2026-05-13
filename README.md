@@ -23,14 +23,14 @@ Formats: **EPUB**, **SRT**, **DOCX**, **TXT**
 Providers:
 
 <p align="left">
-<img src="src/web/static/img/providers/ollama.png" alt="Ollama" height="32">&nbsp;&nbsp;
-<img src="src/web/static/img/providers/poe.png" alt="Poe" height="32">&nbsp;&nbsp;
-<img src="src/web/static/img/providers/openrouter.png" alt="OpenRouter" height="32">&nbsp;&nbsp;
-<img src="src/web/static/img/providers/openai.png" alt="OpenAI" height="32">&nbsp;&nbsp;
-<img src="src/web/static/img/providers/mistral.png" alt="Mistral" height="32">&nbsp;&nbsp;
-<img src="src/web/static/img/providers/deepseek.png" alt="DeepSeek" height="32">&nbsp;&nbsp;
-<img src="src/web/static/img/providers/gemini.png" alt="Gemini" height="32">&nbsp;&nbsp;
-<img src="src/web/static/img/providers/nvidia.png" alt="NVIDIA NIM" height="32">
+<a href="https://ollama.com/"><img src="src/web/static/img/providers/ollama.png" alt="Ollama" height="32"></a>&nbsp;&nbsp;
+<a href="https://poe.com/"><img src="src/web/static/img/providers/poe.png" alt="Poe" height="32"></a>&nbsp;&nbsp;
+<a href="https://openrouter.ai/"><img src="src/web/static/img/providers/openrouter.png" alt="OpenRouter" height="32"></a>&nbsp;&nbsp;
+<a href="https://openai.com/"><img src="src/web/static/img/providers/openai.png" alt="OpenAI" height="32"></a>&nbsp;&nbsp;
+<a href="https://mistral.ai/"><img src="src/web/static/img/providers/mistral.png" alt="Mistral" height="32"></a>&nbsp;&nbsp;
+<a href="https://www.deepseek.com/"><img src="src/web/static/img/providers/deepseek.png" alt="DeepSeek" height="32"></a>&nbsp;&nbsp;
+<a href="https://deepmind.google/technologies/gemini/"><img src="src/web/static/img/providers/gemini.png" alt="Gemini" height="32"></a>&nbsp;&nbsp;
+<a href="https://build.nvidia.com/"><img src="src/web/static/img/providers/nvidia.png" alt="NVIDIA NIM" height="32"></a>
 </p>
 
 - [**Ollama**](https://ollama.com/download) (local / cloud)
