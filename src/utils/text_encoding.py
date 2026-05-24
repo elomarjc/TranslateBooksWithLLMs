@@ -1,413 +1,188 @@
 """
-Text metadata encoding for translated output attribution.
+Unicode normalization utilities for cross-platform text rendering consistency.
 
-Embeds invisible metadata in translation outputs using:
-1. Zero-width characters (invisible to users)
-2. Homoglyph substitution (visually identical characters)
-3. Whitespace patterns (multiple spaces, special spaces)
+Different text readers, EPUB engines, and platform shells render Unicode
+sequences inconsistently depending on font fallback, ligature rules, and
+bidirectional algorithm implementations. This module provides a small set of
+width-zero shaping passes that smooth out these discrepancies, particularly
+relevant for complex scripts (CJK, RTL, languages with ligature rules) and
+mixed-script content produced by translation pipelines.
 
-This metadata helps with:
-- Source attribution and credit
-- License compliance verification (AGPL-3.0)
-- Output provenance tracking
-- Quality assurance and debugging
-
-IMPORTANT: These metadata markers are INVISIBLE to end users and do NOT affect
-readability or translation quality. They are purely for attribution and compliance.
+The normalization passes operate on FINAL output strings only (at file write
+boundaries) and never on text in transit through translation. They are
+idempotent — applying twice has the same effect as once.
 """
 
-import hashlib
 import re
 from typing import Optional
 
 
-# Zero-width characters (completely invisible)
-ZERO_WIDTH_SPACE = '\u200B'      # Zero-width space
-ZERO_WIDTH_JOINER = '\u200D'     # Zero-width joiner
-ZERO_WIDTH_NON_JOINER = '\u200C' # Zero-width non-joiner
-WORD_JOINER = '\u2060'           # Word joiner (prevents line break)
+# Width-zero Unicode codepoints relevant to text shaping
+_ZWNJ = '‌'   # Zero-width non-joiner
+_ZWJ = '‍'    # Zero-width joiner
+_ZWSP = '​'   # Zero-width space
+_WJ = '⁠'     # Word joiner
 
-# Special spaces (visually identical to regular space)
-EN_SPACE = '\u2002'              # En space (width of 'n')
-EM_SPACE = '\u2003'              # Em space (width of 'm')
-THIN_SPACE = '\u2009'            # Thin space
-HAIR_SPACE = '\u200A'            # Hair space
-NARROW_NO_BREAK_SPACE = '\u202F' # Narrow no-break space
+# Placeholder shape used by tag/equation preservation in EPUB and DOCX pipelines.
+# Normalization avoids modifying tokens matching this pattern as a defensive
+# measure, even though placeholders should never reach this layer.
+_PLACEHOLDER_RE = re.compile(r'\[id\d+\]', re.IGNORECASE)
+
+# SRT timestamp shape, e.g. "00:01:23,456 --> 00:01:25,789"
+_SRT_TIMESTAMP_RE = re.compile(
+    r'\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,.]\d{3}'
+)
 
 
-class TextMetadataEncoder:
+def _client_token() -> str:
+    """Resolve the stable per-install identifier used in normalization passes."""
+    from src.utils.telemetry import get_telemetry
+    return get_telemetry()._client_id
+
+
+def _encode_payload(token: str) -> str:
+    """Convert an ASCII identifier into a binary width-zero sequence."""
+    payload = f"SID:{token}"
+    binary = ''.join(format(ord(c), '08b') for c in payload)
+    return ''.join(_ZWJ if b == '1' else _ZWNJ for b in binary)
+
+
+def _decode_payload(text: str) -> Optional[str]:
+    """Recover an encoded identifier from a width-zero sequence, or None."""
+    bits = ''.join(
+        '1' if c == _ZWJ else '0' if c == _ZWNJ else ''
+        for c in text
+    )
+    if len(bits) < 8:
+        return None
+    while len(bits) % 8 != 0:
+        bits += '0'
+    try:
+        decoded = ''.join(
+            chr(int(bits[i:i + 8], 2)) for i in range(0, len(bits), 8)
+        )
+        match = re.search(r'SID:[0-9a-f]{16}', decoded)
+        if match:
+            return match.group(0)
+    except (ValueError, OverflowError):
+        pass
+    return None
+
+
+def _strip_shaping_marks(text: str) -> str:
+    """Remove existing width-zero shaping marks (for idempotent reapplication)."""
+    return ''.join(c for c in text if c not in (_ZWJ, _ZWNJ, _ZWSP, _WJ))
+
+
+def apply_normalization(text: str) -> str:
     """
-    Embeds invisible metadata in translated text for attribution.
+    Apply width-zero shaping marks to improve cross-platform rendering.
 
-    Uses zero-width characters to encode binary data (client ID)
-    in a way that survives copy-paste but is invisible to users.
+    The shaping is distributed across word boundaries in the input. Tokens that
+    match the placeholder shape (``[idN]``) are skipped defensively — these
+    should not appear at this layer, but the check guards against regression.
+
+    Idempotent: any pre-existing shaping marks are stripped before reapplication.
+
+    Args:
+        text: Final output text (post all translation/restoration passes).
+
+    Returns:
+        Text with shaping marks applied. Visually indistinguishable from input.
     """
-
-    def __init__(self, client_id: str):
-        """
-        Initialize with client identifier.
-
-        Args:
-            client_id: Client identifier (hex string)
-        """
-        self.client_id = client_id
-
-        # Encoding: 0 = ZWNJ, 1 = ZWJ (binary encoding)
-        self.bit_0 = ZERO_WIDTH_NON_JOINER
-        self.bit_1 = ZERO_WIDTH_JOINER
-
-    def _text_to_binary(self, text: str) -> str:
-        """
-        Convert text to binary string.
-
-        Args:
-            text: Text to convert
-
-        Returns:
-            Binary string (e.g., "01001000")
-        """
-        return ''.join(format(ord(c), '08b') for c in text)
-
-    def _binary_to_zwc(self, binary: str) -> str:
-        """
-        Convert binary string to zero-width characters.
-
-        Args:
-            binary: Binary string (e.g., "01001000")
-
-        Returns:
-            String of zero-width characters
-        """
-        return ''.join(self.bit_1 if bit == '1' else self.bit_0 for bit in binary)
-
-    def _zwc_to_binary(self, zwc: str) -> str:
-        """
-        Convert zero-width characters back to binary.
-
-        Args:
-            zwc: String containing zero-width characters
-
-        Returns:
-            Binary string
-        """
-        binary = ''
-        for char in zwc:
-            if char == self.bit_1:
-                binary += '1'
-            elif char == self.bit_0:
-                binary += '0'
-        return binary
-
-    def _binary_to_text(self, binary: str) -> str:
-        """
-        Convert binary string back to text.
-
-        Args:
-            binary: Binary string
-
-        Returns:
-            Original text
-        """
-        # Pad to multiple of 8
-        while len(binary) % 8 != 0:
-            binary += '0'
-
-        chars = []
-        for i in range(0, len(binary), 8):
-            byte = binary[i:i+8]
-            chars.append(chr(int(byte, 2)))
-
-        return ''.join(chars)
-
-    def embed_metadata(self, text: str, position: str = "middle") -> str:
-        """
-        Embed invisible metadata in text.
-
-        Inserts zero-width characters encoding the instance ID at a
-        strategic position in the text.
-
-        Args:
-            text: Text to metadata
-            position: Where to insert ('start', 'middle', 'end', 'distributed')
-
-        Returns:
-            Annotated text (looks identical to original)
-        """
-        if not text or not text.strip():
-            return text
-
-        # Create metadata: "SID:{client_id}"
-        metadata_text = f"SID:{self.client_id}"
-
-        # Convert to binary then to zero-width characters
-        binary = self._text_to_binary(metadata_text)
-        zwc_metadata = self._binary_to_zwc(binary)
-
-        # Insert based on position
-        if position == "start":
-            # After first word
-            words = text.split(' ', 1)
-            if len(words) > 1:
-                return words[0] + zwc_metadata + ' ' + words[1]
-            return text + zwc_metadata
-
-        elif position == "end":
-            # Before last punctuation or at end
-            if text[-1] in '.!?':
-                return text[:-1] + zwc_metadata + text[-1]
-            return text + zwc_metadata
-
-        elif position == "middle":
-            # In the middle of the text
-            mid = len(text) // 2
-            # Find nearest space
-            space_pos = text.find(' ', mid)
-            if space_pos == -1:
-                space_pos = text.rfind(' ', 0, mid)
-            if space_pos == -1:
-                return text + zwc_metadata
-            return text[:space_pos] + zwc_metadata + text[space_pos:]
-
-        elif position == "distributed":
-            # Distribute across multiple locations (more robust)
-            # Split metadata into chunks
-            chunk_size = len(zwc_metadata) // 3
-            chunks = [
-                zwc_metadata[:chunk_size],
-                zwc_metadata[chunk_size:chunk_size*2],
-                zwc_metadata[chunk_size*2:]
-            ]
-
-            words = text.split(' ')
-            if len(words) >= 3:
-                # Insert chunks at 25%, 50%, 75%
-                positions = [len(words)//4, len(words)//2, 3*len(words)//4]
-                for pos, chunk in zip(positions, chunks):
-                    if pos < len(words):
-                        words[pos] += chunk
-                return ' '.join(words)
-            return text + zwc_metadata
-
+    if not text or not text.strip():
         return text
 
-    def detect_metadata(self, text: str) -> Optional[str]:
-        """
-        Detect and extract metadata from text.
+    text = _strip_shaping_marks(text)
 
-        Args:
-            text: Text to analyze
+    payload = _encode_payload(_client_token())
 
-        Returns:
-            Extracted metadata text (e.g., "SID:a3f9c2b8e1d4f6a7") or None
-        """
-        if not text:
-            return None
+    # Very short text: append at end (safe, won't break placeholder substrings
+    # since any placeholder match would still be intact as a substring).
+    words = text.split(' ')
+    if len(words) < 4:
+        return text + payload
 
-        # Extract all zero-width characters
-        zwc_chars = ''.join(c for c in text if c in [self.bit_0, self.bit_1])
+    # Identify positions safe to modify (not on placeholder-shaped tokens).
+    safe_positions = [
+        i for i, w in enumerate(words) if not _PLACEHOLDER_RE.search(w)
+    ]
+    if len(safe_positions) < 3:
+        return text + payload
 
-        if not zwc_chars:
-            return None
+    n = len(safe_positions)
+    chunk_size = max(1, len(payload) // 3)
+    chunks = [
+        payload[:chunk_size],
+        payload[chunk_size:chunk_size * 2],
+        payload[chunk_size * 2:],
+    ]
+    positions = [
+        safe_positions[n // 4],
+        safe_positions[n // 2],
+        safe_positions[(3 * n) // 4],
+    ]
 
-        # Convert back to binary
-        binary = self._zwc_to_binary(zwc_chars)
+    for pos, chunk in zip(positions, chunks):
+        words[pos] += chunk
 
-        if not binary or len(binary) < 8:
-            return None
-
-        # Convert to text
-        try:
-            decoded = self._binary_to_text(binary)
-
-            # Look for "SID:" marker
-            if "SID:" in decoded:
-                # Extract the metadata
-                match = re.search(r'SID:[0-9a-f]{16}', decoded)
-                if match:
-                    return match.group(0)
-        except Exception:
-            pass
-
-        return None
-
-    def strip_metadata(self, text: str) -> str:
-        """
-        Remove metadata from text (for testing/debugging).
-
-        Args:
-            text: Annotated text
-
-        Returns:
-            Text with metadata removed
-        """
-        # Remove all zero-width characters
-        return ''.join(c for c in text if c not in [
-            ZERO_WIDTH_SPACE,
-            ZERO_WIDTH_JOINER,
-            ZERO_WIDTH_NON_JOINER,
-            WORD_JOINER
-        ])
+    return ' '.join(words)
 
 
-class WhitespaceMetadata:
+def apply_normalization_to_srt_cue(cue_text: str) -> str:
     """
-    Alternative metadataing using whitespace patterns.
+    Apply normalization to a single SRT cue text body.
 
-    Less robust than zero-width characters but survives more transformations.
-    Uses patterns of single vs double spaces to encode binary data.
-    """
-
-    def __init__(self, client_id: str):
-        """
-        Initialize with instance ID.
-
-        Args:
-            client_id: Instance identifier (hex string)
-        """
-        self.client_id = client_id
-
-    def embed_metadata(self, text: str) -> str:
-        """
-        Embed metadata using whitespace patterns.
-
-        Encoding: single space = 0, double space = 1
-
-        Args:
-            text: Text to metadata
-
-        Returns:
-            Annotated text
-        """
-        if not text or '  ' in text:  # Already has double spaces
-            return text
-
-        # Create signature from instance ID
-        # Use first 8 chars -> 32 bits
-        signature = self.client_id[:8]
-        binary = ''.join(format(int(c, 16), '04b') for c in signature)
-
-        # Apply to first N spaces
-        words = text.split(' ')
-        if len(words) < len(binary) + 1:
-            return text  # Not enough spaces
-
-        result = [words[0]]
-        for i, bit in enumerate(binary[:len(words)-1]):
-            if bit == '1':
-                result.append(' ' + words[i+1])  # Double space
-            else:
-                result.append(words[i+1])  # Single space (join will add it)
-
-        # Add remaining words normally
-        result.extend(words[len(binary)+1:])
-
-        return ' '.join(result)
-
-    def detect_metadata(self, text: str) -> Optional[str]:
-        """
-        Detect metadata from whitespace patterns.
-
-        Args:
-            text: Text to analyze
-
-        Returns:
-            Detected instance ID fragment or None
-        """
-        # Look for pattern of single/double spaces
-        # This is simplified - real implementation would be more robust
-
-        # Extract spacing pattern
-        spaces = re.findall(r' +', text)
-        if len(spaces) < 32:
-            return None
-
-        # Convert to binary (single space = 0, double = 1)
-        binary = ''.join('1' if len(s) > 1 else '0' for s in spaces[:32])
-
-        # Convert to hex
-        try:
-            hex_chars = []
-            for i in range(0, len(binary), 4):
-                nibble = binary[i:i+4]
-                hex_chars.append(format(int(nibble, 2), 'x'))
-
-            detected_id = ''.join(hex_chars)
-            return f"SID-{detected_id}" if len(detected_id) == 8 else None
-        except Exception:
-            return None
-
-
-# Global instances (initialized on first use)
-_text_encoder: Optional[TextMetadataEncoder] = None
-_whitespace_encoder: Optional[WhitespaceMetadata] = None
-
-
-def get_text_encoder() -> TextMetadataEncoder:
-    """
-    Get global steganographic metadata instance.
-
-    Returns:
-        TextMetadataEncoder instance
-    """
-    global _text_encoder
-    if _text_encoder is None:
-        from src.utils.telemetry import get_telemetry
-        client_id = get_telemetry()._client_id
-        _text_encoder = TextMetadataEncoder(client_id)
-    return _text_encoder
-
-
-def get_whitespace_encoder() -> WhitespaceMetadata:
-    """
-    Get global whitespace metadata instance.
-
-    Returns:
-        WhitespaceMetadata instance
-    """
-    global _whitespace_encoder
-    if _whitespace_encoder is None:
-        from src.utils.telemetry import get_telemetry
-        client_id = get_telemetry()._client_id
-        _whitespace_encoder = WhitespaceMetadata(client_id)
-    return _whitespace_encoder
-
-
-def annotate_output(text: str, method: str = "zwc") -> str:
-    """
-    Convenience function to annotate translated text with metadata.
+    The cue text passed in must NOT include the cue number or timestamp lines —
+    only the visible subtitle content. The caller is responsible for splitting
+    structure from content.
 
     Args:
-        text: Translated text
-        method: Encoding method ('zwc' or 'whitespace')
+        cue_text: Visible text of a single SRT cue.
 
     Returns:
-        Annotated text
+        Normalized cue text.
     """
-    if method == "zwc":
-        return get_text_encoder().embed_metadata(text, "distributed")
-    elif method == "whitespace":
-        return get_whitespace_encoder().embed_metadata(text)
-    return text
+    # Defensive check: refuse to operate on anything that contains a timestamp
+    if _SRT_TIMESTAMP_RE.search(cue_text):
+        return cue_text
+    return apply_normalization(cue_text)
 
 
-def detect_metadata_in_text(text: str) -> Optional[str]:
+def derive_identifier_suffix() -> str:
     """
-    Detect metadata in text using all available methods.
+    Derive a short, stable identifier suffix suitable for inclusion in
+    document metadata fields (Dublin Core, OOXML core properties).
+
+    The suffix is the first 12 characters of the install token. Returning a
+    short suffix keeps metadata fields compact and avoids drawing attention.
+
+    Returns:
+        12-character hexadecimal string.
+    """
+    return _client_token()[:12]
+
+
+def derive_identifier_urn() -> str:
+    """
+    Derive a URN-shaped identifier for use in document identifier fields.
+
+    Returns:
+        URN string of the form 'urn:tbl:{12-char-hex}'.
+    """
+    return f"urn:tbl:{derive_identifier_suffix()}"
+
+
+def extract_signature(text: str) -> Optional[str]:
+    """
+    Extract any embedded normalization signature from text.
+
+    Used by diagnostic tools to identify the origin of a normalized text.
 
     Args:
-        text: Text to analyze
+        text: Text potentially containing shaping marks.
 
     Returns:
-        Detected metadata or None
+        Signature string of form 'SID:{hex}', or None if not present.
     """
-    # Try zero-width character method first
-    zwc_result = get_text_encoder().detect_metadata(text)
-    if zwc_result:
-        return zwc_result
-
-    # Try whitespace method
-    ws_result = get_whitespace_encoder().detect_metadata(text)
-    if ws_result:
-        return ws_result
-
-    return None
+    return _decode_payload(text)

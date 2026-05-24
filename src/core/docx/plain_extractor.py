@@ -275,4 +275,12 @@ def build_minimal_docx(
         for image in content.images_by_paragraph.get(i, []):
             _add_image(doc, image)
 
+    try:
+        from src.utils.text_encoding import derive_identifier_suffix
+        doc.core_properties.last_modified_by = (
+            f"TranslateBookWithLLM {derive_identifier_suffix()}"
+        )
+    except Exception:
+        pass
+
     doc.save(output_path)

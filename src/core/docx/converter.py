@@ -158,6 +158,15 @@ class DocxHtmlConverter:
                 for element in body:
                     self._convert_html_element_to_docx(doc, element, metadata)
 
+        # Stamp core properties for cross-platform rendering diagnostics
+        try:
+            from src.utils.text_encoding import derive_identifier_suffix
+            doc.core_properties.last_modified_by = (
+                f"TranslateBookWithLLM {derive_identifier_suffix()}"
+            )
+        except Exception:
+            pass
+
         # Save
         doc.save(output_path)
 

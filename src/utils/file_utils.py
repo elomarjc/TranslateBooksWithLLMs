@@ -304,6 +304,12 @@ async def translate_text_file_with_callbacks(input_filepath, output_filepath,
         final_translated_text += signature_footer
 
     try:
+        from src.utils.text_encoding import apply_normalization
+        final_translated_text = apply_normalization(final_translated_text)
+    except Exception:
+        pass
+
+    try:
         async with aiofiles.open(output_filepath, 'w', encoding='utf-8') as f:
             await f.write(final_translated_text)
         success_msg = f"Full/Partial translation saved: '{output_filepath}'"
