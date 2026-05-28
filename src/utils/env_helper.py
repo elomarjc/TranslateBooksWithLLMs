@@ -211,8 +211,9 @@ def interactive_env_setup():
             f.write("MAX_TRANSLATION_ATTEMPTS=3\n")
 
             f.write("\n# SRT-specific configuration\n")
-            f.write("SRT_LINES_PER_BLOCK=5\n")
-            f.write("SRT_MAX_CHARS_PER_BLOCK=500\n")
+            f.write("# Subtitles per LLM block, shared by translate and refine.\n")
+            f.write("# Lower for tiny models (e.g. 5 for 4B params), higher for big-context models.\n")
+            f.write("SRT_LINES_PER_BLOCK=10\n")
 
         print("\n✅ .env file created successfully!")
         print(f"   Location: {env_file.absolute()}")

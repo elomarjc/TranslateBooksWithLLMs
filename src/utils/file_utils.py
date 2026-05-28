@@ -14,7 +14,11 @@ from src.core.translator import translate_chunks, refine_chunks
 from src.core.subtitle_translator import translate_subtitles, translate_subtitles_in_blocks
 from src.core.epub import translate_epub_file
 from src.core.srt_processor import SRTProcessor
-from src.config import DEFAULT_MODEL, API_ENDPOINT, SRT_LINES_PER_BLOCK, SRT_MAX_CHARS_PER_BLOCK
+from src.config import DEFAULT_MODEL, API_ENDPOINT, SRT_LINES_PER_BLOCK
+
+# Fixed-count grouping for SRT: every block contains exactly
+# SRT_LINES_PER_BLOCK subtitles (no char cap), matching the refine path.
+_NO_CHAR_CAP = 10 ** 12
 
 
 PARTIAL_PREFIX = "[partial] "
@@ -439,21 +443,19 @@ async def translate_srt_file_with_callbacks(input_filepath, output_filepath,
             if log_callback:
                 log_callback("srt_resume_warning", "⚠️ Warning: No saved block structure found, re-grouping (may cause alignment issues)")
                 log_callback("srt_grouping", f"Grouping {len(subtitles)} subtitles into blocks...")
-            lines_per_block = SRT_LINES_PER_BLOCK
             subtitle_blocks = srt_processor.group_subtitles_for_translation(
                 subtitles,
-                lines_per_block=lines_per_block,
-                max_chars_per_block=SRT_MAX_CHARS_PER_BLOCK
+                lines_per_block=SRT_LINES_PER_BLOCK,
+                max_chars_per_block=_NO_CHAR_CAP
             )
     else:
-        # New translation: group normally
+        # New translation: group normally (fixed-count, no char cap).
         if log_callback:
             log_callback("srt_grouping", f"Grouping {len(subtitles)} subtitles into blocks...")
-        lines_per_block = SRT_LINES_PER_BLOCK
         subtitle_blocks = srt_processor.group_subtitles_for_translation(
             subtitles,
-            lines_per_block=lines_per_block,
-            max_chars_per_block=SRT_MAX_CHARS_PER_BLOCK
+            lines_per_block=SRT_LINES_PER_BLOCK,
+            max_chars_per_block=_NO_CHAR_CAP
         )
 
     # Save the blocks structure for potential resume (for new translations only)

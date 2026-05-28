@@ -36,11 +36,17 @@ class SrtAdapter(FormatAdapter):
             if not self.subtitles:
                 return False
 
-            # Group subtitles into blocks for translation
-            lines_per_block = self.config.get('lines_per_block', 5)
+            # Group subtitles into blocks for translation. Default falls
+            # back to SRT_LINES_PER_BLOCK so the env-configured value
+            # (shared with refine) is respected when no per-job override
+            # is passed in.
+            from src.config import SRT_LINES_PER_BLOCK
+            # Fixed-count grouping (no char cap), matches refine semantics.
+            lines_per_block = self.config.get('lines_per_block') or SRT_LINES_PER_BLOCK
             self.blocks = self.processor.group_subtitles_for_translation(
                 self.subtitles,
-                lines_per_block=lines_per_block
+                lines_per_block=lines_per_block,
+                max_chars_per_block=10 ** 12,
             )
 
             return True

@@ -228,8 +228,8 @@ Some models (DeepSeek R1, Qwen3, QwQ, etc.) produce internal reasoning within `<
 **Cause**: Subtitle timing metadata corrupted.
 
 **Solutions**:
-1. SRT uses subtitle-count based grouping (not token-based)
-2. Configure grouping: `SRT_LINES_PER_BLOCK=5`, `SRT_MAX_CHARS_PER_BLOCK=500`
+1. SRT uses fixed-count grouping: every block contains exactly `SRT_LINES_PER_BLOCK` subtitles (default 10), shared by translate and refine
+2. Tune via `SRT_LINES_PER_BLOCK=10` in `.env` — lower for tiny models (e.g. 5 for 4B params), higher for big-context models
 3. Try a smaller block size for better timing preservation
 
 ### "Subtitle numbers wrong"

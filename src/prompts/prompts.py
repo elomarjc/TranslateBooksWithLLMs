@@ -69,6 +69,15 @@ def _get_output_format_section(
 """
 
 
+# Numbering starts at 6 because rules 1-5 are emitted by _get_output_format_section.
+_SUBTITLE_FORMAT_RULES = (
+    "\n6. Each subtitle has an index marker: [index]text - PRESERVE these markers exactly"
+    "\n7. Keep ONE [index] per subtitle - do NOT merge or split subtitles"
+    "\n8. Maintain line breaks between indexed subtitles"
+    "\n9. Preserve inline tags (<i>, <b>, <u>, <font ...>, {\\an8}, etc.) and any \\n line breaks INSIDE a subtitle exactly as in the source"
+)
+
+
 # ============================================================================
 # OPTIONAL PROMPT SECTIONS
 # ============================================================================
@@ -543,6 +552,134 @@ Provide your refined version now:"""
     return PromptPair(system=system_prompt.strip(), user=user_prompt.strip())
 
 
+def generate_subtitle_refinement_block_prompt(
+    subtitle_blocks: List[Tuple[int, str]],
+    previous_refined_block: str = "",
+    target_language: str = "English",
+    translate_tag_in: str = TRANSLATE_TAG_IN,
+    translate_tag_out: str = TRANSLATE_TAG_OUT,
+    additional_instructions: str = "",
+    glossary_block: str = "",
+) -> PromptPair:
+    """
+    Generate a refinement prompt for multiple subtitles in a single LLM call.
+
+    Mirrors generate_subtitle_block_prompt but rewrites each draft subtitle into
+    polished target-language prose while preserving the [index] markers.
+
+    Args:
+        subtitle_blocks: List of tuples (local_index, draft_translated_text)
+        previous_refined_block: Last refined block for continuity
+        target_language: Target language
+        translate_tag_in: Opening tag for refinement output
+        translate_tag_out: Closing tag for refinement output
+        additional_instructions: Extra refinement guidance
+        glossary_block: Optional glossary block
+
+    Returns:
+        PromptPair: A named tuple with 'system' and 'user' prompts
+    """
+    subtitle_additional_rules = _SUBTITLE_FORMAT_RULES
+    subtitle_example_format = "[0]Première ligne affinée\n[1]Deuxième ligne affinée"
+    subtitle_output_format_section = _get_output_format_section(
+        translate_tag_in,
+        translate_tag_out,
+        INPUT_TAG_IN,
+        INPUT_TAG_OUT,
+        additional_rules=subtitle_additional_rules,
+        example_format=subtitle_example_format,
+    )
+
+    additional_instructions_section = ""
+    if additional_instructions and additional_instructions.strip():
+        additional_instructions_section = f"""
+
+# ADDITIONAL REFINEMENT INSTRUCTIONS
+
+{additional_instructions.strip()}"""
+
+    system_prompt = f"""You are an elite {target_language} subtitle editor and dialogue stylist.
+
+# YOUR TASK: REFINE A BLOCK OF SUBTITLES
+
+You will receive a block of DRAFT {target_language} subtitles, each prefixed with an [index] marker.
+Your job is to REWRITE each subtitle with natural, idiomatic {target_language} dialogue while
+preserving the index markers and the one-subtitle-per-marker structure.
+
+**THE INPUT IS:**
+- A block of draft {target_language} subtitles, possibly literal or awkward
+- Each subtitle is prefixed with [N] where N is its local index
+
+**YOUR OUTPUT MUST BE:**
+- The same number of subtitles, each prefixed with the SAME [N] marker
+- Fluent, natural spoken {target_language} suited to subtitling
+
+# REFINEMENT PRINCIPLES
+
+**PRIORITY ORDER:**
+1. **Natural dialogue** - sound like real {target_language} speech, not translation
+2. **Reading speed** - keep subtitle length viewer-friendly
+3. **Continuity** - terminology and tone consistent across the block
+4. **Preserve meaning** - keep the original meaning intact while improving style
+
+**WHAT TO FIX:**
+- Awkward literal phrasing -> natural {target_language} expressions
+- Repetitive vocabulary that is clearly an artefact of literal translation -> varied word choices
+- Unnatural word order -> proper {target_language} syntax
+
+**WHAT TO PRESERVE:**
+- The [index] markers exactly as given
+- All factual content and meaning
+- Character names and proper nouns
+- The one-subtitle-per-[index] structure (no merging, no splitting)
+- Intentional repetitions (e.g. "No. No. No.") and dialogue dashes ("- ...\\n- ...") when present in the draft
+- Inline formatting tags and any \\n line breaks inside a subtitle{additional_instructions_section}
+
+# CRITICAL REMINDERS
+
+You are NOT translating - you are REWRITING in {target_language.upper()}.
+The input is already in {target_language}, but possibly poorly written.
+Your output must be polished, natural {target_language} dialogue.
+
+**Index markers are MANDATORY:** every input [N] must appear exactly once in the output,
+in the same order, followed by the refined text for that subtitle.
+
+{subtitle_output_format_section}"""
+
+    previous_refined_block_text = ""
+    if previous_refined_block and previous_refined_block.strip():
+        previous_refined_block_text = f"""# CONTEXT - Previous Refined Block
+
+For continuity and consistency, here's the previous refined block:
+
+{previous_refined_block}
+
+"""
+
+    formatted_subtitles = [f"[{idx}]{text}" for idx, text in subtitle_blocks]
+    formatted_subtitles_text = "\n".join(formatted_subtitles)
+
+    glossary_section = f"{glossary_block}\n" if glossary_block and glossary_block.strip() else ""
+
+    user_prompt = f"""{previous_refined_block_text}{glossary_section}# SUBTITLES TO REFINE
+
+{INPUT_TAG_IN}
+{formatted_subtitles_text}
+{INPUT_TAG_OUT}
+
+REMINDER: Output format must be:
+{translate_tag_in}
+[0]refined subtitle 0
+[1]refined subtitle 1
+{translate_tag_out}
+
+Start with {translate_tag_in} and end with {translate_tag_out}. Nothing before or after.
+
+Provide your refined block now:"""
+
+    return PromptPair(system=system_prompt.strip(), user=user_prompt.strip())
+
+
 def generate_subtitle_block_prompt(
     subtitle_blocks: List[Tuple[int, str]],
     previous_translation_block: str,
@@ -569,7 +706,7 @@ def generate_subtitle_block_prompt(
         PromptPair: A named tuple with 'system' and 'user' prompts
     """
     # Build the output format section outside the f-string to avoid backslash issues in Python 3.11
-    subtitle_additional_rules = "\n6. Each subtitle has an index marker: [index]text - PRESERVE these markers exactly\n7. Maintain line breaks between indexed subtitles"
+    subtitle_additional_rules = _SUBTITLE_FORMAT_RULES
     subtitle_example_format = "[1]第一行翻译文本\n[2]第二行翻译文本"
     subtitle_output_format_section = _get_output_format_section(
         translate_tag_in,
@@ -617,7 +754,9 @@ Your output must be in {target_language} ONLY - do NOT use any other language.
 **Subtitle-Specific Rules:**
 - Prioritize clarity and reading speed over literal accuracy
 - Condense when necessary without losing meaning
-- Use natural, spoken {target_language} (not formal written style){custom_instructions_section}
+- Use natural, spoken {target_language} (not formal written style)
+- Preserve intentional repetitions (e.g. "No. No. No.") and dialogue dashes ("- ...\\n- ...") from the source
+- Preserve inline formatting tags (<i>, <b>, <font ...>, {{\\an8}}, etc.) and any \\n line breaks inside a subtitle{custom_instructions_section}
 
 # FINAL REMINDER: YOUR OUTPUT LANGUAGE
 

@@ -279,8 +279,12 @@ POE_API_ENDPOINT = os.getenv('POE_API_ENDPOINT', 'https://api.poe.com/v1/chat/co
 NIM_API_ENDPOINT = os.getenv('NIM_API_ENDPOINT', 'https://integrate.api.nvidia.com/v1/chat/completions')
 
 # SRT-specific configuration
-SRT_LINES_PER_BLOCK = int(os.getenv('SRT_LINES_PER_BLOCK', '5'))
-SRT_MAX_CHARS_PER_BLOCK = int(os.getenv('SRT_MAX_CHARS_PER_BLOCK', '500'))
+# Single knob for both translate and refine: every SRT block sent to the
+# LLM contains exactly SRT_LINES_PER_BLOCK subtitles (no char cap). Keeping
+# block sizes predictable makes [N] marker accounting reliable across the
+# whole file. Lower it for tiny models (e.g. 5 for 4B params), raise it
+# for large-context models that handle long structured outputs well.
+SRT_LINES_PER_BLOCK = int(os.getenv('SRT_LINES_PER_BLOCK', '10'))
 
 # Translation Attribution
 # This adds a discrete attribution to your translations (metadata for EPUB, footer for TXT, comment for SRT)

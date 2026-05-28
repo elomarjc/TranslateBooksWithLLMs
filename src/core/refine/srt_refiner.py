@@ -9,7 +9,15 @@ import os
 import aiofiles
 from typing import Optional, Callable, Dict, Any
 
-from src.config import DEFAULT_MODEL, API_ENDPOINT
+from src.config import (
+    DEFAULT_MODEL,
+    API_ENDPOINT,
+    SRT_LINES_PER_BLOCK,
+)
+
+# Disable the char cap when grouping: block sizing is purely fixed-count
+# (every block holds exactly SRT_LINES_PER_BLOCK subtitles).
+_NO_CHAR_CAP = 10 ** 12
 from src.core.llm_client import create_llm_client
 from src.core.srt_processor import SRTProcessor
 from src.core.subtitle_translator import refine_subtitle_translations
@@ -92,6 +100,13 @@ async def refine_srt_file(
         log_callback=log_callback,
     )
 
+    # Fixed-count grouping for refine (no char cap): every block sent to
+    # the LLM has the same shape, which keeps [N] marker accounting
+    # predictable across the whole file.
+    refine_blocks = srt_processor.group_subtitles_for_translation(
+        subtitles, SRT_LINES_PER_BLOCK, _NO_CHAR_CAP
+    )
+
     try:
         refined = await refine_subtitle_translations(
             translations=translations,
@@ -106,6 +121,7 @@ async def refine_srt_file(
             ),
             stats_callback=stats_callback,
             check_interruption_callback=check_interruption_callback,
+            subtitle_blocks=refine_blocks,
         )
     finally:
         if llm_client:
