@@ -188,7 +188,7 @@ function exceedsQualityThreshold(stats) {
  * client-side from the cumulative stats payload so the numbers stay in sync
  * across multi-file EPUB runs (the per-file backend warning text would drift).
  */
-function deriveRateContext(stats) {
+export function deriveRateContext(stats) {
     const processed = stats.processed_chunks || stats.completed_chunks || 0;
     if (processed <= 0) {
         return { retryPct: 0, fallbackPct: 0, avgErrors: '0.0', processed: 0 };
@@ -234,24 +234,27 @@ function buildTipWithLink(template, linkText, action) {
 }
 
 /**
- * Render the recommendation content into the inline panel: an intro line in
- * bold (with live retry / fallback / error rates) followed by a bulleted list
- * of mitigations, two of which carry clickable links to the matching settings
- * (chunk size and Plain Text Mode).
+ * Build the recommendation content (intro line + tip list) into the given
+ * container element. Shared between the live in-progress panel and the
+ * post-translation completion card so the wording and ordering stay in sync.
  *
- * @param {Object} [context] - Numbers used by the intro
+ * Caller owns the container styling (color palette, hidden state, etc.).
+ *
+ * @param {HTMLElement} container - Empty (or to-be-emptied) target element.
+ * @param {Object} [context] - Numbers used by the intro line
  *   (retryPct, fallbackPct, avgErrors, processed).
+ * @param {string} [introKey] - i18n key for the intro line. Defaults to the
+ *   live-progress critical wording; the completion card overrides it with a
+ *   past-tense variant.
  */
-function renderRecommendationPanel(context) {
-    const panel = DomHelpers.getElement('fallbackRecommendationPanel');
-    if (!panel) return;
-
-    panel.textContent = '';
+export function buildRecommendationContent(container, context, introKey) {
+    if (!container) return;
+    container.textContent = '';
 
     const ctx = context || { retryPct: 0, fallbackPct: 0, avgErrors: '0.0', processed: 0 };
     const intro = document.createElement('strong');
-    intro.textContent = t('translation:fallback_panel_intro_critical', ctx);
-    panel.appendChild(intro);
+    intro.textContent = t(introKey || 'translation:fallback_panel_intro_critical', ctx);
+    container.appendChild(intro);
 
     const list = document.createElement('ul');
     list.className = 'recommendation-list';
@@ -266,7 +269,14 @@ function renderRecommendationPanel(context) {
         'plainText',
     ));
 
-    panel.appendChild(list);
+    container.appendChild(list);
+}
+
+function renderRecommendationPanel(context) {
+    buildRecommendationContent(
+        DomHelpers.getElement('fallbackRecommendationPanel'),
+        context,
+    );
 }
 
 /**

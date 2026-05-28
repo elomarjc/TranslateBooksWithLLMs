@@ -807,8 +807,19 @@ async def _process_all_content_files(
     failed_files = 0
     was_interrupted = False
 
-    # Accumulate translation statistics
+    # Accumulate translation statistics. On resume, rehydrate the cross-file
+    # fallback counters from the checkpoint so the Fallbacks stat card does
+    # not restart at zero (issue #180). Per-file metrics are still restored
+    # from the partial XHTML state inside xhtml_translator.
     accumulated_stats = TranslationMetrics()
+    if (checkpoint_manager and translation_id and resume_from_index > 0):
+        try:
+            job = checkpoint_manager.get_job(translation_id)
+        except Exception:
+            job = None
+        if job:
+            snapshot = (job.get('progress') or {}).get('epub_accumulated_stats')
+            _restore_accumulated_stats(snapshot, accumulated_stats)
 
     # Track global chunk progress
     completed_chunks_global = 0
@@ -816,13 +827,22 @@ async def _process_all_content_files(
         if idx < len(chunks_per_file):
             completed_chunks_global += chunks_per_file[idx]
 
-    # Send initial stats if resuming (to update UI immediately)
+    # Send initial stats if resuming (to update UI immediately). Forward the
+    # restored fallback counters so the UI hydrates the Fallbacks card with
+    # the work already done before the pause, instead of showing 0.
     if stats_callback and resume_from_index > 0:
         stats_callback({
             'total_chunks': effective_total_chunks,
             'completed_chunks': completed_chunks_global,
-            'failed_chunks': 0,
-            'total_tokens': 0
+            'failed_chunks': accumulated_stats.failed_chunks,
+            'token_alignment_used': accumulated_stats.token_alignment_used,
+            'fallback_used': accumulated_stats.fallback_used,
+            'placeholder_errors': accumulated_stats.placeholder_errors,
+            'processed_chunks': accumulated_stats.processed_chunks,
+            'successful_after_retry': accumulated_stats.successful_after_retry,
+            'quality_warning_fired': accumulated_stats.quality_warning_fired,
+            'total_tokens': (accumulated_stats.total_tokens_processed
+                             + accumulated_stats.total_tokens_generated)
         })
 
     for file_idx, content_href in enumerate(content_files):
@@ -970,7 +990,8 @@ async def _process_all_content_files(
                 doc_root, file_path, temp_dir, log_callback,
                 total_chunks=total_chunks,
                 completed_chunks=completed_chunks_global,
-                failed_chunks=accumulated_stats.failed_chunks
+                failed_chunks=accumulated_stats.failed_chunks,
+                epub_accumulated_stats=_snapshot_accumulated_stats(accumulated_stats)
             )
 
     # Final progress
@@ -986,6 +1007,56 @@ async def _process_all_content_files(
     }
 
 
+def _snapshot_accumulated_stats(metrics) -> Dict:
+    """Capture the cross-file fallback counters we want to survive a resume.
+
+    Only the cumulative cross-file counters need to round-trip; per-file
+    metrics are already rehydrated by xhtml_translator from the partial
+    state JSON. Going through dedicated fields (not TranslationMetrics.to_dict)
+    avoids the doubled-total_chunks adjustment that to_dict() does for the UI.
+    """
+    return {
+        'token_alignment_used': metrics.token_alignment_used,
+        'token_alignment_success': metrics.token_alignment_success,
+        'fallback_used': metrics.fallback_used,
+        'failed_chunks': metrics.failed_chunks,
+        'placeholder_errors': metrics.placeholder_errors,
+        'processed_chunks': metrics.processed_chunks,
+        'successful_first_try': metrics.successful_first_try,
+        'successful_after_retry': metrics.successful_after_retry,
+        'retry_attempts': metrics.retry_attempts,
+        'quality_warning_fired': metrics.quality_warning_fired,
+        'fallback_warning_fired': metrics.fallback_warning_fired,
+        'correction_attempts': metrics.correction_attempts,
+        'correction_success': metrics.correction_success,
+        'total_tokens_processed': metrics.total_tokens_processed,
+        'total_tokens_generated': metrics.total_tokens_generated,
+        'refinement_chunks_completed': metrics.refinement_chunks_completed,
+    }
+
+
+def _restore_accumulated_stats(snapshot: Dict, metrics) -> None:
+    """Restore counters captured by `_snapshot_accumulated_stats` into a fresh metrics object."""
+    if not snapshot:
+        return
+    metrics.token_alignment_used = snapshot.get('token_alignment_used', 0)
+    metrics.token_alignment_success = snapshot.get('token_alignment_success', 0)
+    metrics.fallback_used = snapshot.get('fallback_used', 0)
+    metrics.failed_chunks = snapshot.get('failed_chunks', 0)
+    metrics.placeholder_errors = snapshot.get('placeholder_errors', 0)
+    metrics.processed_chunks = snapshot.get('processed_chunks', 0)
+    metrics.successful_first_try = snapshot.get('successful_first_try', 0)
+    metrics.successful_after_retry = snapshot.get('successful_after_retry', 0)
+    metrics.retry_attempts = snapshot.get('retry_attempts', 0)
+    metrics.quality_warning_fired = snapshot.get('quality_warning_fired', False)
+    metrics.fallback_warning_fired = snapshot.get('fallback_warning_fired', False)
+    metrics.correction_attempts = snapshot.get('correction_attempts', 0)
+    metrics.correction_success = snapshot.get('correction_success', 0)
+    metrics.total_tokens_processed = snapshot.get('total_tokens_processed', 0)
+    metrics.total_tokens_generated = snapshot.get('total_tokens_generated', 0)
+    metrics.refinement_chunks_completed = snapshot.get('refinement_chunks_completed', 0)
+
+
 async def _save_checkpoint(
     checkpoint_manager,
     translation_id: str,
@@ -997,7 +1068,8 @@ async def _save_checkpoint(
     log_callback: Optional[Callable] = None,
     total_chunks: int = 0,
     completed_chunks: int = 0,
-    failed_chunks: int = 0
+    failed_chunks: int = 0,
+    epub_accumulated_stats: Optional[Dict] = None
 ) -> None:
     """Save checkpoint for a translated file."""
     try:
@@ -1027,7 +1099,10 @@ async def _save_checkpoint(
                 log_callback("xhtml_partial_state_deleted_after_save",
                     f"🗑️ Partial state deleted for {file_rel_path} (file saved successfully)")
 
-            # Update checkpoint progress with chunk statistics
+            # Update checkpoint progress with chunk statistics. The
+            # `epub_accumulated_stats` snapshot is what rehydrates the
+            # Fallbacks stat card on resume — without it the cross-file
+            # counters reset to zero after a pause (issue #180).
             checkpoint_manager.save_checkpoint(
                 translation_id=translation_id,
                 chunk_index=file_idx + 1,
@@ -1036,7 +1111,8 @@ async def _save_checkpoint(
                 chunk_data={'last_file': content_href, 'file_type': 'epub_xhtml'},
                 total_chunks=total_chunks,
                 completed_chunks=completed_chunks,
-                failed_chunks=failed_chunks
+                failed_chunks=failed_chunks,
+                epub_accumulated_stats=epub_accumulated_stats
             )
 
             if log_callback:

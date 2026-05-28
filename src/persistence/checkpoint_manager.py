@@ -131,7 +131,8 @@ class CheckpointManager:
         translation_context: Optional[Dict[str, Any]] = None,
         total_chunks: Optional[int] = None,
         completed_chunks: Optional[int] = None,
-        failed_chunks: Optional[int] = None
+        failed_chunks: Optional[int] = None,
+        epub_accumulated_stats: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
         Save a checkpoint after translating a chunk.
@@ -167,7 +168,8 @@ class CheckpointManager:
             current_chunk_index=chunk_index,
             total_chunks=total_chunks,
             completed_chunks=completed_chunks,
-            failed_chunks=failed_chunks
+            failed_chunks=failed_chunks,
+            epub_accumulated_stats=epub_accumulated_stats
         )
 
         # Update translation context if provided

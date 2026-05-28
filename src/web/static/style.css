@@ -1844,6 +1844,61 @@ input[type="checkbox"] {
     color: #dc2626;
 }
 
+.completion-card__stat--warn {
+    color: #d97706;
+}
+
+/* Quality-warning block displayed inside the completion card when the run
+   produced fallbacks, placeholder errors, or failed chunks. Uses the same
+   blue informational palette as the live .recommendation-panel so the
+   advice surfaces stay visually paired. */
+.completion-card__warning {
+    background: var(--primary-light);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    color: white;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.completion-card__warning-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 600;
+}
+.completion-card__warning-heading .material-symbols-outlined {
+    font-size: 1.15rem;
+}
+.completion-card__warning-breakdown {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.95;
+}
+.completion-card__warning-recommendations strong {
+    display: block;
+    margin-bottom: 0.4rem;
+    color: white;
+}
+.completion-card__warning-recommendations .recommendation-list {
+    margin: 0;
+    padding-left: 1.25rem;
+}
+.completion-card__warning-recommendations .recommendation-list li + li {
+    margin-top: 0.25rem;
+}
+.completion-card__warning-recommendations .recommendation-link {
+    color: white;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.completion-card__warning-recommendations .recommendation-link:hover {
+    color: rgba(255, 255, 255, 0.85);
+}
+
 /* ========================================
    Utility Classes
    ======================================== */

@@ -167,7 +167,8 @@ class Database:
         total_chunks: Optional[int] = None,
         completed_chunks: Optional[int] = None,
         failed_chunks: Optional[int] = None,
-        status: Optional[str] = None
+        status: Optional[str] = None,
+        epub_accumulated_stats: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
         Update job progress information.
@@ -179,6 +180,10 @@ class Database:
             completed_chunks: Number of completed chunks
             failed_chunks: Number of failed chunks
             status: Job status (running, paused, completed, error)
+            epub_accumulated_stats: Snapshot of cross-file accumulated EPUB
+                fallback counters. Stored verbatim in the progress JSON so the
+                resume path can rehydrate counters that live above the
+                per-file checkpoint (token_alignment_used, fallback_used, ...).
 
         Returns:
             True if updated successfully
@@ -208,6 +213,8 @@ class Database:
                     progress['completed_chunks'] = completed_chunks
                 if failed_chunks is not None:
                     progress['failed_chunks'] = failed_chunks
+                if epub_accumulated_stats is not None:
+                    progress['epub_accumulated_stats'] = epub_accumulated_stats
 
                 # Build update query
                 updates = ["progress = ?", "updated_at = CURRENT_TIMESTAMP"]

@@ -12,7 +12,7 @@ import { DomHelpers } from '../ui/dom-helpers.js';
 import { StatusManager } from '../utils/status-manager.js';
 import { FileUpload } from '../files/file-upload.js';
 import { FileActions } from '../files/file-actions.js';
-import { ProgressManager, formatElapsedTime } from './progress-manager.js';
+import { ProgressManager, formatElapsedTime, deriveRateContext, buildRecommendationContent } from './progress-manager.js';
 import { LifecycleManager } from '../utils/lifecycle-manager.js';
 import { t } from '../i18n/i18n.js';
 
@@ -757,12 +757,32 @@ export const TranslationTracker = {
         const container = DomHelpers.getElement('completionCardsContainer');
         if (!container) return;
 
+        const card = document.createElement('div');
+        card.className = 'completion-card';
+        this._populateCompletionCard(card, file, resultData);
+        container.appendChild(card);
+        this._ensureCompletionCardsLocaleListener();
+
+        DomHelpers.hide('progressSection');
+    },
+
+    /**
+     * Fill (or rebuild) an existing completion card with localized content.
+     * Pulled out of `renderCompletionCard` so the same DOM tree can be
+     * re-rendered on `localeChanged` without dropping the card from the page.
+     *
+     * Stashes the source payload on the element itself so the locale listener
+     * can rebuild without coordinating extra storage.
+     */
+    _populateCompletionCard(card, file, resultData) {
+        card._tblPayload = { file, resultData };
+
         const outputFilename = resultData.output_filename || file.outputFilename || file.name;
         const safeFilename = DomHelpers.escapeHtml(outputFilename);
         const statsHtml = this._buildCompletionStatsHtml(file, resultData);
+        const dismissLabel = t('translation:completion_card_dismiss');
 
-        const card = document.createElement('div');
-        card.className = 'completion-card';
+        card.innerHTML = '';
 
         const topRow = document.createElement('div');
         topRow.className = 'completion-card__top';
@@ -770,7 +790,6 @@ export const TranslationTracker = {
 
         const main = document.createElement('div');
         main.className = 'completion-card__main';
-        const dismissLabel = t('translation:completion_card_dismiss');
         main.innerHTML = `
             <div class="completion-card__header">
                 <h3 class="completion-card__title">
@@ -786,6 +805,11 @@ export const TranslationTracker = {
         topRow.appendChild(main);
         card.appendChild(topRow);
 
+        const warningBlock = this._buildCompletionWarningBlock(file, resultData);
+        if (warningBlock) {
+            card.appendChild(warningBlock);
+        }
+
         const actionsGroup = FileActions.createActionGroup({
             actions: ['download', 'open', 'reveal', 'files-tab'],
             filename: outputFilename,
@@ -795,10 +819,26 @@ export const TranslationTracker = {
         card.appendChild(actionsGroup);
 
         card.querySelector('.completion-card__close').addEventListener('click', () => card.remove());
+    },
 
-        container.appendChild(card);
-
-        DomHelpers.hide('progressSection');
+    /**
+     * Re-render every visible completion card whenever the user switches
+     * locale, so the dynamically interpolated strings (title, stat badges,
+     * warning block, action labels) stay in sync with the rest of the UI.
+     * Bound once, lazily, the first time a card is rendered.
+     */
+    _ensureCompletionCardsLocaleListener() {
+        if (this._completionLocaleListenerBound) return;
+        this._completionLocaleListenerBound = true;
+        window.addEventListener('localeChanged', () => {
+            const container = DomHelpers.getElement('completionCardsContainer');
+            if (!container) return;
+            container.querySelectorAll('.completion-card').forEach((card) => {
+                if (card._tblPayload) {
+                    this._populateCompletionCard(card, card._tblPayload.file, card._tblPayload.resultData);
+                }
+            });
+        });
     },
 
     /**
@@ -837,6 +877,12 @@ export const TranslationTracker = {
 
         const failed = stats.failed_chunks || 0;
         const elapsed = stats.elapsed_time;
+        const fallbacks = (file && file.fileType === 'srt')
+            ? 0
+            : (stats.token_alignment_used || 0) + (stats.fallback_used || 0);
+        const placeholderErrors = (file && file.fileType === 'srt')
+            ? 0
+            : (stats.placeholder_errors || 0);
 
         const cost = stats.openrouter_cost || 0;
         const promptTokens = stats.openrouter_prompt_tokens || 0;
@@ -853,6 +899,14 @@ export const TranslationTracker = {
             items.push(`<span class="completion-card__stat--error">${t('translation:completion_failed_chunks', { count: failed })}</span>`);
         }
 
+        if (fallbacks > 0) {
+            items.push(`<span class="completion-card__stat--warn">${t('translation:completion_fallback_chunks', { count: fallbacks })}</span>`);
+        }
+
+        if (placeholderErrors > 0) {
+            items.push(`<span class="completion-card__stat--warn">${t('translation:completion_placeholder_errors', { count: placeholderErrors })}</span>`);
+        }
+
         if (cost > 0 || totalTokens > 0) {
             items.push(`$${cost.toFixed(4)} · ${totalTokens.toLocaleString()} tokens`);
         }
@@ -860,6 +914,84 @@ export const TranslationTracker = {
         if (items.length === 0) return '';
 
         return `<span class="completion-card__stats"> - ${items.join(' · ')}</span>`;
+    },
+
+    /**
+     * Build the warning block surfaced beneath the title when the run produced
+     * fallbacks, placeholder errors, or failed chunks. Mirrors the live
+     * recommendation panel from progress-manager so the post-translation
+     * advice stays in sync with what was shown during the run.
+     *
+     * @param {Object} file - File object (used to gate by file type)
+     * @param {Object} resultData - Final payload (contains stats)
+     * @returns {HTMLElement|null} Warning block element, or null when there is
+     *   nothing worth surfacing.
+     */
+    _buildCompletionWarningBlock(file, resultData) {
+        const stats = resultData.stats || {};
+        if (file && file.fileType === 'srt') {
+            return null;
+        }
+
+        const fallbacks = (stats.token_alignment_used || 0) + (stats.fallback_used || 0);
+        const placeholderErrors = stats.placeholder_errors || 0;
+        const failed = stats.failed_chunks || 0;
+        const tokenAlignment = stats.token_alignment_used || 0;
+        const untranslated = stats.fallback_used || 0;
+
+        if (fallbacks === 0 && placeholderErrors === 0 && failed === 0) {
+            return null;
+        }
+
+        const block = document.createElement('div');
+        block.className = 'completion-card__warning';
+
+        const heading = document.createElement('div');
+        heading.className = 'completion-card__warning-heading';
+        const icon = document.createElement('span');
+        icon.className = 'material-symbols-outlined';
+        icon.textContent = 'warning';
+        heading.appendChild(icon);
+        const headingText = document.createElement('span');
+        headingText.textContent = t('translation:completion_warning_heading');
+        heading.appendChild(headingText);
+        block.appendChild(heading);
+
+        const breakdownItems = [];
+        if (tokenAlignment > 0) {
+            breakdownItems.push(t('translation:completion_warning_token_alignment', { count: tokenAlignment }));
+        }
+        if (untranslated > 0) {
+            breakdownItems.push(t('translation:completion_warning_untranslated', { count: untranslated }));
+        }
+        if (placeholderErrors > 0) {
+            breakdownItems.push(t('translation:completion_warning_placeholder_errors', { count: placeholderErrors }));
+        }
+        if (failed > 0) {
+            breakdownItems.push(t('translation:completion_warning_failed', { count: failed }));
+        }
+        if (breakdownItems.length > 0) {
+            const breakdown = document.createElement('div');
+            breakdown.className = 'completion-card__warning-breakdown';
+            breakdown.textContent = breakdownItems.join(' · ');
+            block.appendChild(breakdown);
+        }
+
+        // Only renew the rate-based recommendations when there were actual
+        // fallbacks or placeholder issues — a run with only `failed_chunks`
+        // (e.g. provider errors) is not really a "tune the LLM" situation.
+        if (fallbacks > 0 || placeholderErrors > 0) {
+            const recommendations = document.createElement('div');
+            recommendations.className = 'completion-card__warning-recommendations';
+            buildRecommendationContent(
+                recommendations,
+                deriveRateContext(stats),
+                'translation:completion_warning_intro',
+            );
+            block.appendChild(recommendations);
+        }
+
+        return block;
     },
 
     /**
