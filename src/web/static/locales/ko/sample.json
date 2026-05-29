@@ -1,6 +1,6 @@
 {
   "title": "샘플 및 비교",
-  "subtitle": "전체 번역 없이 책의 몇 개 발췌문에 대해 최대 4개의 LLM 구성을 나란히 실행하세요.",
+  "subtitle": "전체 번역 없이 책의 몇 개 발췌문에 대해 여러 LLM 구성을 나란히 실행하세요.",
 
   "drop_file_title": "샘플링할 책을 드롭하세요",
   "drop_file_support": "TXT, EPUB, SRT, DOCX 지원",
@@ -21,6 +21,9 @@
   "llm_label": "LLM {{index}}",
   "add_llm": "LLM 추가",
   "remove_llm": "이 LLM 제거",
+  "apply_to_settings_title": "이 LLM 구성을 앱 설정에 적용",
+  "apply_to_settings": "설정으로 보내기",
+  "applied_to_settings": "앱 설정에 적용됨",
 
   "run": "실행",
   "stop": "중지",
@@ -42,6 +45,7 @@
   "badge_error": "오류",
 
   "warning_small_document": "문서에 {{total}}개의 청크만 있습니다. {{requested}}개 대신 내부 청크 {{count}}개를 샘플링했습니다.",
+  "warning_lang_autodetected": "원본 언어가 {{lang}}(으)로 자동 감지되었습니다 (신뢰도 {{confidence}}%).",
 
   "run_done": "샘플 실행이 완료되었습니다.",
   "run_stopped": "샘플 실행이 중지되었습니다.",

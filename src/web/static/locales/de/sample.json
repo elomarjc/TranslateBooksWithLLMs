@@ -1,6 +1,6 @@
 {
   "title": "Stichprobe & Vergleich",
-  "subtitle": "Vergleiche bis zu 4 LLM-Konfigurationen Seite an Seite anhand einiger Auszüge aus deinem Buch — ohne vollständige Übersetzung.",
+  "subtitle": "Vergleiche mehrere LLM-Konfigurationen Seite an Seite anhand einiger Auszüge aus deinem Buch — ohne vollständige Übersetzung.",
 
   "drop_file_title": "Buch zum Sampeln ablegen",
   "drop_file_support": "Unterstützt TXT, EPUB, SRT und DOCX",
@@ -21,6 +21,9 @@
   "llm_label": "LLM {{index}}",
   "add_llm": "LLM hinzufügen",
   "remove_llm": "Diesen LLM entfernen",
+  "apply_to_settings_title": "Diese LLM-Konfiguration auf die App-Einstellungen anwenden",
+  "apply_to_settings": "An Einstellungen senden",
+  "applied_to_settings": "Auf die App-Einstellungen angewendet",
 
   "run": "Starten",
   "stop": "Stoppen",
@@ -42,6 +45,7 @@
   "badge_error": "Fehler",
 
   "warning_small_document": "Das Dokument hat nur {{total}} Abschnitte; {{count}} innere Abschnitte statt {{requested}} verwendet.",
+  "warning_lang_autodetected": "Ausgangssprache automatisch erkannt: {{lang}} (Konfidenz {{confidence}} %).",
 
   "run_done": "Sampling abgeschlossen.",
   "run_stopped": "Sampling gestoppt.",

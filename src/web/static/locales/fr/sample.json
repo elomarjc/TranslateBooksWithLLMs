@@ -1,6 +1,6 @@
 {
   "title": "Échantillonner & Comparer",
-  "subtitle": "Comparez côte à côte jusqu'à 4 configurations LLM sur quelques extraits de votre livre — sans lancer une traduction complète.",
+  "subtitle": "Comparez côte à côte plusieurs configurations LLM sur quelques extraits de votre livre — sans lancer une traduction complète.",
 
   "drop_file_title": "Déposez un livre à échantillonner",
   "drop_file_support": "Formats pris en charge : TXT, EPUB, SRT et DOCX",
@@ -21,6 +21,9 @@
   "llm_label": "LLM {{index}}",
   "add_llm": "Ajouter un LLM",
   "remove_llm": "Supprimer ce LLM",
+  "apply_to_settings_title": "Appliquer la configuration de ce LLM aux réglages de l'application",
+  "apply_to_settings": "Envoyer aux réglages",
+  "applied_to_settings": "Appliqué aux réglages de l'application",
 
   "run": "Lancer",
   "stop": "Arrêter",
@@ -42,6 +45,7 @@
   "badge_error": "erreur",
 
   "warning_small_document": "Le document ne contient que {{total}} segments ; {{count}} segments internes échantillonnés au lieu de {{requested}}.",
+  "warning_lang_autodetected": "Langue source détectée automatiquement : {{lang}} (confiance {{confidence}} %).",
 
   "run_done": "Échantillonnage terminé.",
   "run_stopped": "Échantillonnage arrêté.",

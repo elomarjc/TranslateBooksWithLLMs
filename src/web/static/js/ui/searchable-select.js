@@ -151,7 +151,11 @@ export class SearchableSelect {
 
         this.dropdown.appendChild(this.searchHeader);
         this.dropdown.appendChild(this.optionsList);
-        this.wrapper.appendChild(this.dropdown);
+        // Portal the dropdown to <body> so it is never clipped by an ancestor's
+        // overflow (e.g. `.main-card { overflow: hidden }` on the Sample tab, or
+        // `.modal-content { overflow: auto }` in the Settings modal). It is
+        // positioned as `fixed` relative to the display element on open.
+        document.body.appendChild(this.dropdown);
     }
 
     /**
@@ -179,22 +183,62 @@ export class SearchableSelect {
             this.searchInput.focus();
         });
 
-        // Close on outside click
-        document.addEventListener('click', (e) => {
-            if (!this.wrapper.contains(e.target)) {
+        // Close on outside click. The dropdown is portalled to <body>, so a
+        // click inside it is NOT inside the wrapper — check both.
+        this._onDocClick = (e) => {
+            if (!this.wrapper.contains(e.target) && !this.dropdown.contains(e.target)) {
                 this._close();
             }
-        });
+        };
+        document.addEventListener('click', this._onDocClick);
+
+        // Reposition the portalled dropdown when the page (or any scroll
+        // container) scrolls or the viewport resizes while it is open. Bound
+        // here once; (de)registered in _open/_close to avoid idle overhead.
+        this._onReposition = () => {
+            if (this.isOpen) this._position();
+        };
 
         // Watch for programmatic changes to original select
-        const observer = new MutationObserver(() => {
+        this._observer = new MutationObserver(() => {
             this._updateFromOriginalSelect();
         });
-        observer.observe(this.originalSelect, {
+        this._observer.observe(this.originalSelect, {
             childList: true,
             subtree: true,
             attributes: true
         });
+    }
+
+    /**
+     * Position the portalled dropdown as `fixed`, anchored to the display
+     * element. Flips above the field when there isn't enough room below, and
+     * clamps the height to the available space.
+     */
+    _position() {
+        const rect = this.displayWrapper.getBoundingClientRect();
+        const gap = 4;
+        const margin = 8;
+        const desired = 400;
+        const spaceBelow = window.innerHeight - rect.bottom - margin;
+        const spaceAbove = rect.top - margin;
+
+        const openUp = spaceBelow < Math.min(desired, 220) && spaceAbove > spaceBelow;
+        const maxH = Math.max(140, Math.min(desired, openUp ? spaceAbove : spaceBelow));
+
+        // Mirror the original -1px bleed on each side so the dropdown lines up
+        // with the field's border.
+        this.dropdown.style.left = `${rect.left - 1}px`;
+        this.dropdown.style.width = `${rect.width + 2}px`;
+        this.dropdown.style.setProperty('--ss-max-h', `${maxH}px`);
+
+        if (openUp) {
+            this.dropdown.style.top = 'auto';
+            this.dropdown.style.bottom = `${window.innerHeight - rect.top + gap}px`;
+        } else {
+            this.dropdown.style.bottom = 'auto';
+            this.dropdown.style.top = `${rect.bottom + gap}px`;
+        }
     }
 
     /**
@@ -448,6 +492,7 @@ export class SearchableSelect {
 
         this.isOpen = true;
         this.wrapper.classList.add('open');
+        this.dropdown.classList.add('open');
         this.arrow.textContent = 'expand_less';
 
         // Debug: log options state
@@ -455,6 +500,11 @@ export class SearchableSelect {
             console.warn(`[SearchableSelect] Opening dropdown for #${this.originalSelect.id} but allOptions is empty! Retrying...`);
             this._updateFromOriginalSelect();
         }
+
+        // Position the portalled dropdown and keep it anchored on scroll/resize.
+        this._position();
+        window.addEventListener('resize', this._onReposition);
+        document.addEventListener('scroll', this._onReposition, true);
 
         // Reset search and show all options
         this.searchInput.value = '';
@@ -483,8 +533,12 @@ export class SearchableSelect {
 
         this.isOpen = false;
         this.wrapper.classList.remove('open');
+        this.dropdown.classList.remove('open');
         this.arrow.textContent = 'expand_more';
         this.highlightedIndex = -1;
+
+        window.removeEventListener('resize', this._onReposition);
+        document.removeEventListener('scroll', this._onReposition, true);
     }
 
     /**
@@ -607,6 +661,11 @@ export class SearchableSelect {
      * Destroy the searchable select and restore original
      */
     destroy() {
+        this._close();
+        document.removeEventListener('click', this._onDocClick);
+        if (this._observer) this._observer.disconnect();
+        // The dropdown was portalled to <body> — remove it explicitly.
+        this.dropdown.remove();
         this.originalSelect.style.display = '';
         this.wrapper.parentNode.insertBefore(this.originalSelect, this.wrapper);
         this.wrapper.remove();

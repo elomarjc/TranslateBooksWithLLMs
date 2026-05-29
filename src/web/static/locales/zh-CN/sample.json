@@ -1,6 +1,6 @@
 {
   "title": "采样与对比",
-  "subtitle": "在书籍的几段摘录上并排运行最多 4 个 LLM 配置——无需完整翻译。",
+  "subtitle": "在书籍的几段摘录上并排运行多个 LLM 配置——无需完整翻译。",
 
   "drop_file_title": "拖入一本书进行采样",
   "drop_file_support": "支持 TXT、EPUB、SRT 和 DOCX",
@@ -21,6 +21,9 @@
   "llm_label": "LLM {{index}}",
   "add_llm": "添加 LLM",
   "remove_llm": "删除此 LLM",
+  "apply_to_settings_title": "将此 LLM 配置应用到应用程序设置",
+  "apply_to_settings": "发送到设置",
+  "applied_to_settings": "已应用到应用程序设置",
 
   "run": "运行",
   "stop": "停止",
@@ -42,6 +45,7 @@
   "badge_error": "错误",
 
   "warning_small_document": "文档只有 {{total}} 个区块；已采样 {{count}} 个内部区块（请求 {{requested}}）。",
+  "warning_lang_autodetected": "已自动检测源语言为 {{lang}}（置信度 {{confidence}}%）。",
 
   "run_done": "采样运行完成。",
   "run_stopped": "采样运行已停止。",

@@ -2245,11 +2245,11 @@ html.dark .file-info {
 
 /* Dropdown */
 .searchable-select-dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: -1px;
-    right: -1px;
-    z-index: 1000;
+    /* Portalled to <body> and positioned via JS (see searchable-select.js).
+       `fixed` + high z-index keep it above modals and immune to ancestor
+       overflow clipping. top/left/width are set inline on open. */
+    position: fixed;
+    z-index: 12000;
     background: var(--background-light);
     border: 2px solid var(--primary-light);
     border-radius: 1rem;
@@ -2259,12 +2259,16 @@ html.dark .file-info {
     opacity: 0;
     transform: translateY(-8px);
     transition: max-height 0.25s ease, opacity 0.2s ease, transform 0.2s ease;
+    pointer-events: none;
 }
 
-.searchable-select.open .searchable-select-dropdown {
-    max-height: 400px;
+.searchable-select-dropdown.open {
+    display: flex;
+    flex-direction: column;
+    max-height: var(--ss-max-h, 400px);
     opacity: 1;
     transform: translateY(0);
+    pointer-events: auto;
 }
 
 /* Search header */
@@ -2275,6 +2279,7 @@ html.dark .file-info {
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--border-light);
     background: rgba(54, 118, 216, 0.03);
+    flex: 0 0 auto; /* never shrink when dropdown height is tight */
 }
 
 .searchable-select-search-icon {
@@ -2323,7 +2328,10 @@ html.dark .file-info {
     list-style: none;
     margin: 0;
     padding: 0.5rem 0;
-    max-height: 320px;
+    /* Fill the remaining dropdown height (after the search header) and scroll.
+       min-height:0 lets the flex item shrink below its content size. */
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
 }
 
@@ -3327,12 +3335,44 @@ html.dark .update-overlay__error { color: #fca5a5; }
 }
 
 .sample-column-card {
-    background: var(--background-outer);
+    /* Use the recessed surface tone (not pure white) so the white input wells
+       inside the card stand out. The neumorphic shadow keeps it raised. */
+    background: var(--background-light);
     box-shadow: 4px 4px 8px var(--shadow-dark), -4px -4px 8px var(--shadow-light);
 }
+
+/* While a Run is in flight, lock the column editor: editing a provider/model
+   mid-run would race the arriving cell_done events. */
+#sampleColumns.is-running {
+    pointer-events: none;
+    opacity: 0.6;
+}
 html.dark .sample-column-card {
-    background: var(--background-outer);
+    background: var(--background-light);
     border-color: var(--border-light) !important;
+}
+
+/* Give the provider/model searchable-selects and the endpoint input a clear
+   input-well surface so they don't melt into the card background. */
+.sample-column-card .searchable-select,
+.sample-column-card .sample-endpoint-input,
+.sample-column-card .sample-instructions-select,
+.sample-column-card .sample-glossary-select {
+    background: var(--background-outer);
+    border: 1px solid var(--border-light);
+    border-radius: 0.75rem;
+}
+.sample-column-card .sample-endpoint-input,
+.sample-column-card .sample-instructions-select,
+.sample-column-card .sample-glossary-select {
+    box-sizing: border-box;
+}
+html.dark .sample-column-card .searchable-select,
+html.dark .sample-column-card .sample-endpoint-input,
+html.dark .sample-column-card .sample-instructions-select,
+html.dark .sample-column-card .sample-glossary-select {
+    background: #222222;
+    border-color: #444444;
 }
 
 .sample-warning {
@@ -3614,6 +3654,9 @@ html.dark .sample-card {
     white-space: pre-wrap;
     line-height: 1.5;
 }
+/* Refined output: by default read as clean prose — the final text with the
+   added words highlighted green and the removed words hidden. Hovering the
+   block reveals the full word-level diff (struck-through removals in red). */
 .sample-output-diff ins {
     background: rgba(34, 197, 94, 0.18);
     text-decoration: none;
@@ -3621,6 +3664,10 @@ html.dark .sample-card {
     border-radius: 2px;
 }
 .sample-output-diff del {
+    display: none;
+}
+.sample-output-diff:hover del {
+    display: inline;
     background: rgba(239, 68, 68, 0.18);
     text-decoration: line-through;
     padding: 0 2px;
@@ -3629,7 +3676,7 @@ html.dark .sample-card {
 html.dark .sample-output-diff ins {
     background: rgba(34, 197, 94, 0.26);
 }
-html.dark .sample-output-diff del {
+html.dark .sample-output-diff:hover del {
     background: rgba(239, 68, 68, 0.26);
 }
 

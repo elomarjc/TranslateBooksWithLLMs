@@ -8,6 +8,11 @@
  * Pure DOM helper. No i18n needed (no user-facing strings).
  */
 
+import { DomHelpers } from '../ui/dom-helpers.js';
+
+// Shared HTML escaper (was a local copy here and in sample-table.js).
+const escapeHtml = DomHelpers.escapeHtml;
+
 function tokenize(text) {
     // Keep whitespace as its own token so we can rebuild the layout exactly.
     return String(text || '').split(/(\s+)/);
@@ -31,15 +36,6 @@ function lcsTable(a, b) {
         }
     }
     return dp;
-}
-
-function escapeHtml(s) {
-    return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
 }
 
 /**

@@ -1,6 +1,6 @@
 {
   "title": "サンプル & 比較",
-  "subtitle": "本のいくつかの抜粋に対して最大 4 つの LLM 構成を並べて実行できます — 完全な翻訳は不要です。",
+  "subtitle": "本のいくつかの抜粋に対して複数の LLM 構成を並べて実行できます — 完全な翻訳は不要です。",
 
   "drop_file_title": "サンプリングする本をドロップ",
   "drop_file_support": "TXT、EPUB、SRT、DOCX に対応",
@@ -21,6 +21,9 @@
   "llm_label": "LLM {{index}}",
   "add_llm": "LLM を追加",
   "remove_llm": "この LLM を削除",
+  "apply_to_settings_title": "この LLM の構成をアプリ設定に適用",
+  "apply_to_settings": "設定に送信",
+  "applied_to_settings": "アプリ設定に適用しました",
 
   "run": "実行",
   "stop": "停止",
@@ -42,6 +45,7 @@
   "badge_error": "エラー",
 
   "warning_small_document": "ドキュメントには {{total}} 個のチャンクしかないため、{{requested}} 個ではなく {{count}} 個の内部チャンクをサンプリングしました。",
+  "warning_lang_autodetected": "ソース言語を {{lang}} として自動検出しました（信頼度 {{confidence}}%）。",
 
   "run_done": "サンプル実行が完了しました。",
   "run_stopped": "サンプル実行が停止しました。",

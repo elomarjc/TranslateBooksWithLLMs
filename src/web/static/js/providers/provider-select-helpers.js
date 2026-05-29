@@ -86,10 +86,16 @@ export function populateModelSelectInto(selectEl, models, defaultModel = null, p
         });
     } else if (provider === 'openai') {
         list.forEach((m) => {
+            // Accept both the normalized `{value, label}` shape (Settings panel)
+            // and the backend's raw `{id, name}` shape (Sample tab passes the
+            // /api/models payload straight through). Without this fallback the
+            // OpenAI list renders as many blank-labelled rows.
+            const value = m.value ?? m.id ?? '';
+            const label = m.label ?? m.name ?? value;
             const opt = document.createElement('option');
-            opt.value = m.value;
-            opt.textContent = m.label;
-            if (m.value === defaultModel) { opt.selected = true; defaultFound = true; }
+            opt.value = value;
+            opt.textContent = label;
+            if (value === defaultModel) { opt.selected = true; defaultFound = true; }
             selectEl.appendChild(opt);
         });
     } else if (provider === 'openrouter' || provider === 'poe') {
@@ -134,11 +140,15 @@ export function populateModelSelectInto(selectEl, models, defaultModel = null, p
         });
     } else if (provider === 'mistral' || provider === 'deepseek' || provider === 'nim') {
         list.forEach((m) => {
+            // Same dual-shape tolerance as the openai branch: Settings sends
+            // `{value, label}`, the Sample tab forwards the raw `{id, name}`.
+            const value = m.value ?? m.id ?? '';
+            const label = m.label ?? m.name ?? value;
             const opt = document.createElement('option');
-            opt.value = m.value;
-            opt.textContent = m.label;
+            opt.value = value;
+            opt.textContent = label;
             if (m.context_length) opt.title = `Context: ${m.context_length} tokens`;
-            if (m.value === defaultModel) { opt.selected = true; defaultFound = true; }
+            if (value === defaultModel) { opt.selected = true; defaultFound = true; }
             selectEl.appendChild(opt);
         });
     } else {

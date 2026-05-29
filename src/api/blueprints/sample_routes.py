@@ -1,25 +1,30 @@
 """
 Sample & Compare routes.
 
-Runs up to 4 LLM configurations in parallel on N short extracts of an uploaded
-book, streaming each cell back to the client over WebSocket as it completes.
+Runs an arbitrary number of LLM configurations in parallel on N short extracts
+of an uploaded book, streaming each cell back to the client over WebSocket as it
+completes.
 No persistence: state lives in `SampleStateManager` and is dropped after 1
 hour or on server restart.
 """
 import asyncio
+import logging
 import os
 import random
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from flask import Blueprint, jsonify, request
 
 from src.config import (
-    DEFAULT_CONTEXT_FALLBACK, MAX_TOKENS_PER_CHUNK, OLLAMA_NUM_CTX,
+    MAX_TOKENS_PER_CHUNK, OLLAMA_NUM_CTX,
     REQUEST_TIMEOUT, SRT_LINES_PER_BLOCK,
 )
+from src.core.glossary import build_glossary_block, filter_glossary
+from src.core.glossary.models import GlossaryConfig
 from src.core.llm.factory import create_llm_provider
 from src.core.pricing.pricing_data import get_default_pricing
 from src.core.sampling import cap_chunk_text, select_sample_indices
@@ -27,6 +32,7 @@ from src.core.text_processor import split_text_into_chunks
 from src.prompts.prompts import (
     generate_refinement_prompt, generate_translation_prompt,
 )
+from src.utils.custom_instructions import is_safe_filename, load_custom_instructions
 from src.utils.file_detector import detect_file_type
 from src.utils.language_detector import LanguageDetector
 
@@ -34,6 +40,29 @@ from src.utils.language_detector import LanguageDetector
 # Per-run concurrency cap. The product spec asks for `min(K * N, 8)` to avoid
 # hammering providers; this is enforced per sample run via an asyncio.Semaphore.
 SAMPLE_CONCURRENCY_CAP = 8
+
+logger = logging.getLogger(__name__)
+
+
+def _clamp_int(value: Any, default: int, lo: int, hi: int) -> int:
+    """Parse `value` as int (falling back to `default` when None) and clamp to [lo, hi].
+
+    Raises ValueError/TypeError for non-numeric input so callers can return 400.
+    """
+    return max(lo, min(hi, int(default if value is None else value)))
+
+
+def _small_document_warning(total: int, count: int, requested: int) -> Dict[str, Any]:
+    """Structured warning for "doc has fewer interior units than requested".
+
+    Returned as {code, params} (not a pre-formatted English string) so the
+    client can translate it reactively via the `sample:warning_small_document`
+    i18n key, whose {{total}}/{{count}}/{{requested}} placeholders match params.
+    """
+    return {
+        "code": "warning_small_document",
+        "params": {"total": total, "count": count, "requested": requested},
+    }
 
 
 def _resolve_api_key(value: Any, env_var_name: str) -> str:
@@ -80,11 +109,18 @@ def _extract_plain_text(file_path: str, file_type: str) -> str:
 
 
 def _extract_epub_text(file_path: str) -> str:
-    """Concatenate the textual content of every XHTML body in the EPUB."""
+    """Concatenate the block-level text of every XHTML body in the EPUB.
+
+    Reuses the main translate flow's `extract_plain_paragraphs`, which walks
+    block elements once and returns one string per paragraph. (An earlier
+    version iterated *every* element and joined `itertext()` per element, which
+    re-emitted each paragraph once per ancestor — heavily duplicating content
+    and corrupting the sampled extracts.)
+    """
     import zipfile
     from lxml import etree
 
-    from src.core.epub.plain_extractor import _local_name  # type: ignore
+    from src.core.epub.plain_extractor import _local_name, extract_plain_paragraphs
 
     parts: List[str] = []
     try:
@@ -98,14 +134,14 @@ def _extract_epub_text(file_path: str) -> str:
                     root = etree.fromstring(raw)
                 except Exception:
                     continue
-                # Walk and pick up text nodes inside block-level XHTML elements.
-                for elem in root.iter():
-                    if not isinstance(elem.tag, str):
-                        continue
-                    if _local_name(elem) in ("script", "style"):
-                        continue
-                    text = "".join(elem.itertext())
-                    text = text.strip()
+                body = next(
+                    (el for el in root.iter()
+                     if isinstance(el.tag, str) and _local_name(el) == "body"),
+                    root,
+                )
+                paragraphs, _tags, _images = extract_plain_paragraphs(body)
+                for text in paragraphs:
+                    text = (text or "").strip()
                     if text:
                         parts.append(text)
                         parts.append("\n\n")
@@ -196,37 +232,31 @@ def _items_for_indices(
     return items
 
 
-def _build_srt_sample_blocks(file_path: str, n_samples: int, max_chars: int) -> Tuple[List[Dict[str, Any]], List[str]]:
+def _build_srt_sample_blocks(file_path: str, n_samples: int, max_chars: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """For SRT files, sample N blocks. Returns (items, warnings)."""
     units = _load_source_units(file_path, "srt")
     total = len(units)
     if total < 3:
         raise ValueError("document too small for sampling")
 
-    warnings: List[str] = []
+    warnings: List[Dict[str, Any]] = []
     indices = select_sample_indices(total, n_samples)
     if len(indices) < n_samples:
-        warnings.append(
-            f"Document has only {total} subtitle blocks; "
-            f"sampled {len(indices)} interior blocks instead of {n_samples}."
-        )
+        warnings.append(_small_document_warning(total, len(indices), n_samples))
     return _items_for_indices(units, indices, max_chars), warnings
 
 
-def _build_text_sample_items(text: str, n_samples: int, max_chars: int) -> Tuple[List[Dict[str, Any]], List[str]]:
+def _build_text_sample_items(text: str, n_samples: int, max_chars: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Chunk plain text and select N representative items capped at max_chars."""
     chunks = split_text_into_chunks(text, max_tokens_per_chunk=MAX_TOKENS_PER_CHUNK)
     total = len(chunks)
     if total < 3:
         raise ValueError("document too small for sampling")
 
-    warnings: List[str] = []
+    warnings: List[Dict[str, Any]] = []
     indices = select_sample_indices(total, n_samples)
     if len(indices) < n_samples:
-        warnings.append(
-            f"Document has only {total} chunks; "
-            f"sampled {len(indices)} interior chunks instead of {n_samples}."
-        )
+        warnings.append(_small_document_warning(total, len(indices), n_samples))
     return _items_for_indices(chunks, indices, max_chars), warnings
 
 
@@ -275,38 +305,29 @@ def _compute_cost_usd(provider: str, model: str, prompt_tokens: int, completion_
     )
 
 
-async def _run_cell_translate(
+async def _execute_cell(
     *,
     sample_id: str,
     row: int,
     col: int,
-    item: Dict[str, Any],
+    phase: str,
+    prompt_pair,
     column: Dict[str, Any],
-    source_language: str,
-    target_language: str,
-    prompt_options: Dict[str, Any],
+    ref_text: str,
     state: "SampleStateManager",
     socketio,
 ) -> Optional[str]:
-    """
-    Run a single translate call. Returns the translated text on success, or
-    None on error. Emits one WebSocket event when the cell finishes.
+    """Run one LLM call for a cell and emit its result.
+
+    Shared by the translate and refine phases — they differ only in the prompt
+    pair and the text the length ratio is measured against (`ref_text`).
+    Returns the cleaned output on success, or None on error/empty/cancel. Emits
+    exactly one WebSocket event (done or error), except when cancelled.
     """
     if state.is_cancelled(sample_id):
         return None
 
     started = time.perf_counter()
-    prompt_pair = generate_translation_prompt(
-        main_content=item["source_text"],
-        context_before=item.get("context_before", ""),
-        context_after=item.get("context_after", ""),
-        previous_translation_context="",
-        source_language=source_language,
-        target_language=target_language,
-        has_placeholders=False,
-        prompt_options=prompt_options,
-    )
-
     provider = None
     try:
         provider = _instantiate_provider(column)
@@ -319,7 +340,7 @@ async def _run_cell_translate(
 
         if response is None or not response.content:
             _emit_cell(
-                socketio, state, sample_id, row, col, "translate",
+                socketio, state, sample_id, row, col, phase,
                 status="error",
                 output=None,
                 metrics={"latency_ms": latency_ms},
@@ -343,30 +364,29 @@ async def _run_cell_translate(
             response.prompt_tokens,
             response.completion_tokens,
         )
-        src_len = max(1, len(item["source_text"]))
+        src_len = max(1, len(ref_text))
         length_ratio = round(len(output_text) / src_len, 3)
 
-        metrics = {
-            "latency_ms": latency_ms,
-            "prompt_tokens": response.prompt_tokens,
-            "completion_tokens": response.completion_tokens,
-            "cost_usd": cost,
-            "length_ratio": length_ratio,
-            "was_fallback": used_fallback,
-            "was_truncated": response.was_truncated,
-        }
         _emit_cell(
-            socketio, state, sample_id, row, col, "translate",
+            socketio, state, sample_id, row, col, phase,
             status="done",
             output=output_text,
-            metrics=metrics,
+            metrics={
+                "latency_ms": latency_ms,
+                "prompt_tokens": response.prompt_tokens,
+                "completion_tokens": response.completion_tokens,
+                "cost_usd": cost,
+                "length_ratio": length_ratio,
+                "was_fallback": used_fallback,
+                "was_truncated": response.was_truncated,
+            },
             error=None,
         )
         return output_text
     except Exception as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)
         _emit_cell(
-            socketio, state, sample_id, row, col, "translate",
+            socketio, state, sample_id, row, col, phase,
             status="error",
             output=None,
             metrics={"latency_ms": latency_ms},
@@ -381,6 +401,39 @@ async def _run_cell_translate(
                 pass
 
 
+async def _run_cell_translate(
+    *,
+    sample_id: str,
+    row: int,
+    col: int,
+    item: Dict[str, Any],
+    column: Dict[str, Any],
+    source_language: str,
+    target_language: str,
+    prompt_options: Dict[str, Any],
+    glossary_block: str = "",
+    state: "SampleStateManager",
+    socketio,
+) -> Optional[str]:
+    """Run a single translate call. Returns the translated text, or None."""
+    prompt_pair = generate_translation_prompt(
+        main_content=item["source_text"],
+        context_before=item.get("context_before", ""),
+        context_after=item.get("context_after", ""),
+        previous_translation_context="",
+        source_language=source_language,
+        target_language=target_language,
+        has_placeholders=False,
+        prompt_options=prompt_options,
+        glossary_block=glossary_block,
+    )
+    return await _execute_cell(
+        sample_id=sample_id, row=row, col=col, phase="translate",
+        prompt_pair=prompt_pair, column=column, ref_text=item["source_text"],
+        state=state, socketio=socketio,
+    )
+
+
 async def _run_cell_refine(
     *,
     sample_id: str,
@@ -391,14 +444,11 @@ async def _run_cell_refine(
     column: Dict[str, Any],
     target_language: str,
     prompt_options: Dict[str, Any],
+    glossary_block: str = "",
     state: "SampleStateManager",
     socketio,
 ) -> None:
     """Run a single refine call. Emits one WebSocket event when done."""
-    if state.is_cancelled(sample_id):
-        return
-
-    started = time.perf_counter()
     prompt_pair = generate_refinement_prompt(
         draft_translation=draft_text,
         context_before=item.get("context_before", ""),
@@ -407,75 +457,16 @@ async def _run_cell_refine(
         target_language=target_language,
         has_placeholders=False,
         prompt_options=prompt_options,
+        glossary_block=glossary_block,
+        # A preset's refinement section reaches the refine prompt via
+        # `additional_instructions` (prompt_options alone isn't read for it).
+        additional_instructions=(prompt_options.get("refinement_instructions") or ""),
     )
-
-    provider = None
-    try:
-        provider = _instantiate_provider(column)
-        response = await provider.generate(
-            prompt=prompt_pair.user,
-            system_prompt=prompt_pair.system,
-            timeout=REQUEST_TIMEOUT,
-        )
-        latency_ms = int((time.perf_counter() - started) * 1000)
-
-        if response is None or not response.content:
-            _emit_cell(
-                socketio, state, sample_id, row, col, "refine",
-                status="error",
-                output=None,
-                metrics={"latency_ms": latency_ms},
-                error="LLM returned an empty response",
-            )
-            return
-
-        extracted = provider.extract_translation(response.content)
-        used_fallback = response.was_fallback
-        if extracted is None or not extracted.strip():
-            extracted = response.content
-            used_fallback = True
-        output_text = extracted.strip()
-
-        cost = _compute_cost_usd(
-            column.get("provider", "ollama"),
-            column.get("model", ""),
-            response.prompt_tokens,
-            response.completion_tokens,
-        )
-        src_len = max(1, len(draft_text))
-        length_ratio = round(len(output_text) / src_len, 3)
-
-        metrics = {
-            "latency_ms": latency_ms,
-            "prompt_tokens": response.prompt_tokens,
-            "completion_tokens": response.completion_tokens,
-            "cost_usd": cost,
-            "length_ratio": length_ratio,
-            "was_fallback": used_fallback,
-            "was_truncated": response.was_truncated,
-        }
-        _emit_cell(
-            socketio, state, sample_id, row, col, "refine",
-            status="done",
-            output=output_text,
-            metrics=metrics,
-            error=None,
-        )
-    except Exception as exc:
-        latency_ms = int((time.perf_counter() - started) * 1000)
-        _emit_cell(
-            socketio, state, sample_id, row, col, "refine",
-            status="error",
-            output=None,
-            metrics={"latency_ms": latency_ms},
-            error=str(exc),
-        )
-    finally:
-        if provider is not None:
-            try:
-                await provider.close()
-            except Exception:
-                pass
+    await _execute_cell(
+        sample_id=sample_id, row=row, col=col, phase="refine",
+        prompt_pair=prompt_pair, column=column, ref_text=draft_text,
+        state=state, socketio=socketio,
+    )
 
 
 def _emit_cell(socketio, state, sample_id, row, col, phase, *, status, output, metrics, error):
@@ -499,7 +490,79 @@ def _emit_cell(socketio, state, sample_id, row, col, phase, *, status, output, m
     try:
         socketio.emit("sample_update", payload, namespace="/")
     except Exception as exc:
-        print(f"sample_update emit failed for {sample_id}: {exc}")
+        logger.error("sample_update emit failed for %s: %s", sample_id, exc)
+
+
+def _column_prompt_options(base_options: Dict[str, Any], column: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge the run-wide prompt_options with a column's own custom-instruction
+    preset (a file in Custom_Instructions/). A per-column preset overrides the
+    run-wide `custom_instructions` (translation phase) and `refinement_instructions`
+    (refine phase). Best-effort: an unsafe/missing/empty file is ignored, so the
+    column falls back to the run-wide options.
+    """
+    opts = dict(base_options or {})
+    filename = (column.get("custom_instruction_file") or "").strip()
+    if not filename:
+        return opts
+    if not is_safe_filename(filename):
+        logger.warning("sample: ignoring unsafe custom instruction filename %r", filename)
+        return opts
+    try:
+        ci_dir = Path(os.getcwd()) / "Custom_Instructions"
+        loaded = load_custom_instructions(filename, ci_dir)
+        translation = loaded.get("translation")
+        refinement = loaded.get("refinement")
+        if translation:
+            opts["custom_instructions"] = translation
+        if refinement:
+            opts["refinement_instructions"] = refinement
+    except Exception as exc:
+        logger.warning("sample: failed to load custom instructions %r: %s", filename, exc)
+    return opts
+
+
+def _load_column_glossary(glossary_id: Any) -> Optional[Dict[str, Any]]:
+    """Load a glossary by id into {terms_dict, term_metadata, target_language},
+    or None when there's no/invalid glossary. Best-effort: any failure (missing
+    id, store error, empty glossary) yields None so the column runs without one.
+    """
+    if not glossary_id:
+        return None
+    try:
+        from src.api.translation_state import get_glossary_store  # lazy: avoid cycle
+        glossary = get_glossary_store().get_glossary(int(glossary_id))
+    except Exception as exc:
+        logger.warning("sample: failed to load glossary %r: %s", glossary_id, exc)
+        return None
+    if not glossary or not glossary.terms:
+        return None
+    return {
+        "terms_dict": glossary.terms_dict,
+        "term_metadata": {
+            term.source_term: {"category": term.category or ""}
+            for term in glossary.terms if term.source_term
+        },
+        "target_language": glossary.target_language or "",
+    }
+
+
+def _glossary_block_for(glossary_data: Optional[Dict[str, Any]], text: str) -> str:
+    """Build the per-cell glossary block: filter the glossary to terms present
+    in this cell's source text, then format. Returns '' when nothing matches."""
+    if not glossary_data:
+        return ""
+    try:
+        filtered, _capped = filter_glossary(text, glossary_data["terms_dict"], GlossaryConfig())
+        if not filtered:
+            return ""
+        return build_glossary_block(
+            filtered_terms=filtered,
+            target_language=glossary_data["target_language"],
+            term_metadata=glossary_data["term_metadata"],
+        )
+    except Exception as exc:
+        logger.warning("sample: failed to build glossary block: %s", exc)
+        return ""
 
 
 async def _run_sample_async(
@@ -524,6 +587,12 @@ async def _run_sample_async(
     skip = skip_cells or set()
     sem = asyncio.Semaphore(min(SAMPLE_CONCURRENCY_CAP, max(1, len(items) * len(columns))))
 
+    # Resolve each column's custom-instruction preset and glossary once, so every
+    # cell of that column reuses them (the glossary block is still filtered per
+    # cell against that cell's source text).
+    column_options = [_column_prompt_options(prompt_options, c) for c in columns]
+    column_glossaries = [_load_column_glossary(c.get("glossary_id")) for c in columns]
+
     async def cell_task(row: int, col: int):
         async with sem:
             if state.is_cancelled(sample_id):
@@ -532,13 +601,16 @@ async def _run_sample_async(
                 return
             item = items[row]
             column = columns[col]
+            cell_options = column_options[col]
+            glossary_block = _glossary_block_for(column_glossaries[col], item["source_text"])
             if mode == "refine":
                 # Treat the source extract as the draft to refine.
                 await _run_cell_refine(
                     sample_id=sample_id, row=row, col=col,
                     draft_text=item["source_text"], item=item, column=column,
                     target_language=target_language,
-                    prompt_options=prompt_options,
+                    prompt_options=cell_options,
+                    glossary_block=glossary_block,
                     state=state, socketio=socketio,
                 )
                 return
@@ -547,7 +619,8 @@ async def _run_sample_async(
                 sample_id=sample_id, row=row, col=col,
                 item=item, column=column,
                 source_language=source_language, target_language=target_language,
-                prompt_options=prompt_options,
+                prompt_options=cell_options,
+                glossary_block=glossary_block,
                 state=state, socketio=socketio,
             )
 
@@ -556,7 +629,8 @@ async def _run_sample_async(
                     sample_id=sample_id, row=row, col=col,
                     draft_text=draft, item=item, column=column,
                     target_language=target_language,
-                    prompt_options=prompt_options,
+                    prompt_options=cell_options,
+                    glossary_block=glossary_block,
                     state=state, socketio=socketio,
                 )
 
@@ -578,7 +652,7 @@ async def _run_sample_async(
                 namespace="/",
             )
         except Exception as exc:
-            print(f"sample_update final emit failed for {sample_id}: {exc}")
+            logger.error("sample_update final emit failed for %s: %s", sample_id, exc)
 
 
 def _spawn_sample_thread(coro_factory):
@@ -636,8 +710,8 @@ def create_sample_blueprint(sample_state_manager, socketio=None):
             return err
 
         try:
-            n_samples = max(2, min(20, int(data.get("n_samples", 5))))
-            max_chars = max(50, min(2000, int(data.get("max_chars", 180))))
+            n_samples = _clamp_int(data.get("n_samples"), 5, 2, 20)
+            max_chars = _clamp_int(data.get("max_chars"), 180, 50, 2000)
         except (TypeError, ValueError):
             return jsonify({"error": "n_samples and max_chars must be integers"}), 400
 
@@ -653,12 +727,9 @@ def create_sample_blueprint(sample_state_manager, socketio=None):
         except Exception as exc:
             return jsonify({"error": f"Failed to initialize samples: {exc}"}), 500
 
-        warnings: List[str] = []
+        warnings: List[Dict[str, Any]] = []
         if len(indices) < n_samples:
-            warnings.append(
-                f"Document has only {total} chunks; "
-                f"sampled {len(indices)} interior chunks instead of {n_samples}."
-            )
+            warnings.append(_small_document_warning(total, len(indices), n_samples))
 
         public_items = [
             {"index": it["index"], "source_text": it["source_text"], "truncated": it["truncated"]}
@@ -679,7 +750,7 @@ def create_sample_blueprint(sample_state_manager, socketio=None):
             return err
 
         try:
-            max_chars = max(50, min(2000, int(data.get("max_chars", 180))))
+            max_chars = _clamp_int(data.get("max_chars"), 180, 50, 2000)
         except (TypeError, ValueError):
             return jsonify({"error": "max_chars must be an integer"}), 400
 
@@ -729,35 +800,24 @@ def create_sample_blueprint(sample_state_manager, socketio=None):
             if field not in data or data[field] in (None, "", []):
                 return jsonify({"error": f"Missing or empty field: {field}"}), 400
 
-        file_path = data["file_path"]
-        if not os.path.exists(file_path):
-            return jsonify({"error": f"File not found: {file_path}"}), 404
+        # File existence + type detection/mismatch (shared with initialize/extract).
+        file_path, file_type, err = _validate_file(data)
+        if err is not None:
+            return err
 
         mode = (data.get("mode") or "translate").lower()
         if mode not in ("translate", "refine", "translate_refine"):
             return jsonify({"error": f"Invalid mode: {mode}"}), 400
 
         try:
-            n_samples = max(2, min(20, int(data.get("n_samples", 5))))
-            max_chars = max(50, min(2000, int(data.get("max_chars", 180))))
+            n_samples = _clamp_int(data.get("n_samples"), 5, 2, 20)
+            max_chars = _clamp_int(data.get("max_chars"), 180, 50, 2000)
         except (TypeError, ValueError):
             return jsonify({"error": "n_samples and max_chars must be integers"}), 400
 
         columns_raw = data["columns"]
-        if not isinstance(columns_raw, list) or not (1 <= len(columns_raw) <= 4):
-            return jsonify({"error": "columns must be a list of 1 to 4 entries"}), 400
-
-        # Detect file type — trust the client hint but verify it matches what
-        # the server's detector sees, to fail fast on tampered requests.
-        try:
-            detected = detect_file_type(file_path)
-        except Exception as exc:
-            return jsonify({"error": f"Cannot detect file type: {exc}"}), 400
-        file_type = (data.get("file_type") or detected).lower()
-        if file_type != detected:
-            return jsonify({
-                "error": f"File type mismatch: client said {file_type!r}, server detected {detected!r}",
-            }), 400
+        if not isinstance(columns_raw, list) or len(columns_raw) < 1:
+            return jsonify({"error": "columns must be a non-empty list"}), 400
 
         # Build sample items.
         #
@@ -767,7 +827,7 @@ def create_sample_blueprint(sample_state_manager, socketio=None):
         #    client-supplied source_text, but re-derive context_before/after
         #    server-side (deterministic given the file).
         #  - `items` missing → fall back to the legacy auto-sampling path.
-        warnings: List[str] = []
+        warnings: List[Dict[str, Any]] = []
         client_items = data.get("items")
         try:
             if client_items is not None:
@@ -815,10 +875,10 @@ def create_sample_blueprint(sample_state_manager, socketio=None):
             columns.append({
                 "provider": (raw.get("provider") or "ollama").lower(),
                 "model": raw.get("model") or "",
-                "temperature": float(raw.get("temperature", 0.3)),
-                "context_window": int(raw.get("context_window") or OLLAMA_NUM_CTX),
                 "api_key": raw.get("api_key"),
                 "api_endpoint": raw.get("api_endpoint") or raw.get("endpoint"),
+                "custom_instruction_file": raw.get("custom_instruction_file") or "",
+                "glossary_id": raw.get("glossary_id") or None,
             })
 
         sample_id = f"sample_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
@@ -848,12 +908,12 @@ def create_sample_blueprint(sample_state_manager, socketio=None):
                 )
                 if detected_name:
                     source_language = detected_name
-                    warnings.append(
-                        f"Source language auto-detected as {detected_name} "
-                        f"(confidence {confidence:.0%})."
-                    )
+                    warnings.append({
+                        "code": "warning_lang_autodetected",
+                        "params": {"lang": detected_name, "confidence": round(confidence * 100)},
+                    })
             except Exception as exc:
-                print(f"sample: language auto-detection failed: {exc}")
+                logger.warning("sample: language auto-detection failed: %s", exc)
         if not source_language:
             return jsonify({
                 "error": "Could not auto-detect source language; please pick one manually.",

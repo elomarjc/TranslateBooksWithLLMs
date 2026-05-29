@@ -3,7 +3,7 @@
  *
  * Owns:
  *  - upload state for the selected book file
- *  - the dynamic list of LLM columns (1..4)
+ *  - the dynamic list of LLM columns (1..N, no upper bound)
  *  - kick-off + stop of a sample run via the backend
  *  - subscription to the `sample_update` WebSocket event for streaming cells
  *  - a cross-Run results cache so identical (item, llm, params) cells are
@@ -16,6 +16,7 @@
 
 import { ApiClient } from '../core/api-client.js';
 import { WebSocketManager } from '../core/websocket-manager.js';
+import { SettingsManager } from '../core/settings-manager.js';
 import { DomHelpers } from '../ui/dom-helpers.js';
 import { t, applyToDOM } from '../i18n/i18n.js';
 import { SampleTable } from './sample-table.js';
@@ -34,13 +35,11 @@ import {
 // render, which would otherwise leave orphan instances in the factory map.
 const sampleSearchableIds = new Set();
 
-const MAX_COLUMNS = 4;
-
 const state = {
     file: null,          // File object
     uploadedPath: null,  // path on server after upload
     fileType: null,
-    columns: [],         // [{provider, model, temperature, context_window}]
+    columns: [],         // [{provider, model, api_endpoint, custom_instruction_file, glossary_id}]
     mode: 'translate',
     currentSampleId: null,
     running: false,
@@ -63,8 +62,87 @@ const state = {
 // Value: { translate?: {output, metrics}, refine?: {output, metrics} }
 const resultsCache = new Map();
 
+// Providers that take a configurable API endpoint in the column UI. Both
+// default to the endpoint set in Settings (fetched once via /api/config).
+const ENDPOINT_PROVIDERS = new Set(['openai', 'ollama']);
+let settingsEndpoints = { ollama: '', openai: '' };
+
+// Available custom-instruction presets (files in Custom_Instructions/), shared
+// by every column's per-LLM picker. [{ filename, display_name }]
+let customInstructionFiles = [];
+
+// Available glossaries, shared by every column's per-LLM picker. [{ id, name }]
+let glossaryList = [];
+
 function $(id) {
     return document.getElementById(id);
+}
+
+/**
+ * The endpoint a column should send (and use to list models). Only meaningful
+ * for ENDPOINT_PROVIDERS; returns undefined otherwise so stale values from a
+ * previous provider are never forwarded.
+ */
+function columnEndpoint(col) {
+    return ENDPOINT_PROVIDERS.has(col.provider) ? (col.api_endpoint || undefined) : undefined;
+}
+
+/** Greyed-out hint shown when the endpoint field is empty, per provider. */
+function endpointPlaceholder(provider) {
+    if (provider === 'ollama') return settingsEndpoints.ollama || 'http://localhost:11434/api/generate';
+    return settingsEndpoints.openai || 'https://api.openai.com/v1/chat/completions';
+}
+
+/**
+ * Fetch the Settings endpoints once and seed any column still lacking one, so
+ * new columns default to the same endpoint the user configured in Settings.
+ */
+async function loadSettingsEndpoints() {
+    try {
+        const cfg = await ApiClient.getConfig();
+        settingsEndpoints = {
+            ollama: cfg.ollama_api_endpoint || cfg.api_endpoint || '',
+            openai: cfg.openai_api_endpoint || '',
+        };
+        let changed = false;
+        state.columns.forEach((col) => {
+            if (!col.api_endpoint && settingsEndpoints[col.provider]) {
+                col.api_endpoint = settingsEndpoints[col.provider];
+                changed = true;
+            }
+        });
+        if (changed) renderColumns();
+    } catch (err) {
+        console.warn('[sample] could not load default endpoints from /api/config', err);
+    }
+}
+
+/**
+ * Fetch the custom-instruction presets once and re-render columns so each LLM's
+ * picker is populated. Same source as the Translate tab's global picker.
+ */
+async function loadCustomInstructionFiles() {
+    try {
+        const data = await ApiClient.getCustomInstructions();
+        customInstructionFiles = Array.isArray(data.files) ? data.files : [];
+        if (customInstructionFiles.length) renderColumns();
+    } catch (err) {
+        console.warn('[sample] could not load custom instruction presets', err);
+    }
+}
+
+/**
+ * Fetch the glossaries once and re-render columns so each LLM's glossary picker
+ * is populated.
+ */
+async function loadGlossaries() {
+    try {
+        const data = await ApiClient.getGlossaries();
+        glossaryList = Array.isArray(data.glossaries) ? data.glossaries : [];
+        if (glossaryList.length) renderColumns();
+    } catch (err) {
+        console.warn('[sample] could not load glossaries', err);
+    }
 }
 
 /**
@@ -91,10 +169,10 @@ function buildCellKey(item, col, runCtx) {
         tl: runCtx.target_lang || '',
         provider: col.provider || '',
         model: col.model || '',
-        temp: typeof col.temperature === 'number' ? col.temperature : 0.3,
-        ctx: col.context_window || 0,
+        ep: columnEndpoint(col) || '',
+        cif: col.custom_instruction_file || '',
         po: normalizePromptOptions(runCtx.prompt_options),
-        gl: runCtx.glossary_id || '',
+        gl: col.glossary_id || '',
     });
 }
 
@@ -130,6 +208,32 @@ function showSampleMessage(text, type = 'info') {
     box.appendChild(div);
 }
 
+/**
+ * Render server warnings into the warnings box. Each warning is a structured
+ * `{ code, params }` object (the backend no longer emits pre-formatted English
+ * strings). We emit a `data-i18n` span so applyToDOM translates it now AND
+ * re-translates it on a UI language switch — a raw string would freeze in
+ * whatever locale was active when the warning arrived. Legacy plain strings
+ * are still tolerated for safety.
+ */
+function renderWarnings(box, warnings) {
+    if (!box) return;
+    if (!Array.isArray(warnings) || warnings.length === 0) {
+        box.innerHTML = '';
+        return;
+    }
+    box.innerHTML = warnings.map((w) => {
+        if (w && typeof w === 'object' && w.code) {
+            const key = `sample:${w.code}`;
+            const params = w.params || {};
+            const paramsAttr = DomHelpers.escapeHtml(JSON.stringify(params));
+            return `<div class="sample-warning">⚠ <span data-i18n="${key}" data-i18n-params='${paramsAttr}'>${DomHelpers.escapeHtml(t(key, params))}</span></div>`;
+        }
+        return `<div class="sample-warning">⚠ ${DomHelpers.escapeHtml(String(w))}</div>`;
+    }).join('');
+    applyToDOM(box);
+}
+
 function setButtonsRunningState(running) {
     state.running = running;
     const runBtn = $('sampleRunBtn');
@@ -137,7 +241,12 @@ function setButtonsRunningState(running) {
     const addBtn = $('sampleAddColumnBtn');
     if (runBtn) runBtn.disabled = running;
     if (stopBtn) stopBtn.classList.toggle('hidden', !running);
-    if (addBtn) addBtn.disabled = running || state.columns.length >= MAX_COLUMNS;
+    if (addBtn) addBtn.disabled = running;
+    // Freeze the whole column editor while a Run is in flight: changing a
+    // provider/model mid-run would call refreshResultsFromCache() and clobber
+    // the in-flight run's currentRunKeys + re-render, losing shimmer state.
+    const columnsEl = $('sampleColumns');
+    if (columnsEl) columnsEl.classList.toggle('is-running', running);
     document.querySelectorAll('#sampleColumns .sample-column-remove').forEach((btn) => {
         btn.disabled = running || state.columns.length <= 1;
     });
@@ -179,7 +288,12 @@ function syncSampleEditButtons() {
 async function loadAndPopulateModelsForColumn(col, modelSelectEl) {
     setPlaceholderOption(modelSelectEl, 'common:loading');
     try {
-        const data = await ApiClient.getModels(col.provider, { apiKey: '__USE_ENV__' });
+        const data = await ApiClient.getModels(col.provider, {
+            apiKey: '__USE_ENV__',
+            // Endpoint applies to ollama + openai columns; ignore a value left
+            // over from a different provider.
+            apiEndpoint: columnEndpoint(col),
+        });
         const models = data.models || [];
         if (!models.length) {
             setPlaceholderOption(modelSelectEl, 'settings:search_models_no_models_available');
@@ -211,6 +325,9 @@ function buildColumnCard(idx, col) {
 
     const providerId = `sampleColProvider-${idx}`;
     const modelId = `sampleColModel-${idx}`;
+    const endpointId = `sampleColEndpoint-${idx}`;
+    const ciId = `sampleColInstructions-${idx}`;
+    const glossaryId = `sampleColGlossary-${idx}`;
 
     const providerOptions = PROVIDER_ORDER.map((value) => {
         const meta = PROVIDER_META[value] || { name: value };
@@ -218,12 +335,32 @@ function buildColumnCard(idx, col) {
         return `<option value="${value}" ${selected}>${meta.name}</option>`;
     }).join('');
 
+    const ciOptions = [`<option value="">${DomHelpers.escapeHtml(t('settings:select_none'))}</option>`]
+        .concat(customInstructionFiles.map((f) => {
+            const sel = col.custom_instruction_file === f.filename ? 'selected' : '';
+            return `<option value="${DomHelpers.escapeHtml(f.filename)}" ${sel}>${DomHelpers.escapeHtml(f.display_name || f.filename)}</option>`;
+        }))
+        .join('');
+
+    const glossaryOptions = [`<option value="">${DomHelpers.escapeHtml(t('settings:select_none'))}</option>`]
+        .concat(glossaryList.map((g) => {
+            const sel = String(col.glossary_id) === String(g.id) ? 'selected' : '';
+            return `<option value="${DomHelpers.escapeHtml(String(g.id))}" ${sel}>${DomHelpers.escapeHtml(g.name || `#${g.id}`)}</option>`;
+        }))
+        .join('');
+
     card.innerHTML = `
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
-            <strong>${t('sample:llm_label', { index: idx + 1, defaultValue: `LLM ${idx + 1}` })}</strong>
-            <button type="button" class="btn btn-secondary sample-column-remove" data-i18n-attr="title:sample:remove_llm" title="${t('sample:remove_llm')}" style="padding: 0.3rem 0.6rem; font-size: 0.8125rem;">
-                <span class="material-symbols-outlined" style="font-size: 1rem;">delete</span>
-            </button>
+            <strong>#${idx + 1}</strong>
+            <div style="display: flex; gap: 6px;">
+                <button type="button" class="btn btn-secondary sample-apply-settings" data-i18n-attr="title:sample:apply_to_settings_title" title="${t('sample:apply_to_settings_title')}" style="padding: 0.3rem 0.6rem; font-size: 0.8125rem; gap: 5px;">
+                    <span class="material-symbols-outlined" style="font-size: 1rem;">move_to_inbox</span>
+                    <span data-i18n="sample:apply_to_settings">${t('sample:apply_to_settings')}</span>
+                </button>
+                <button type="button" class="btn btn-secondary sample-column-remove" data-i18n-attr="title:sample:remove_llm" title="${t('sample:remove_llm')}" style="padding: 0.3rem 0.6rem; font-size: 0.8125rem;">
+                    <span class="material-symbols-outlined" style="font-size: 1rem;">delete</span>
+                </button>
+            </div>
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
             <div class="form-group" style="margin-bottom: 0;">
@@ -237,27 +374,73 @@ function buildColumnCard(idx, col) {
                 </select>
             </div>
         </div>
+        <div class="form-group sample-column-endpoint" style="margin: 10px 0 0; ${ENDPOINT_PROVIDERS.has(col.provider) ? '' : 'display: none;'}">
+            <label data-i18n="settings:api_endpoint">API Endpoint</label>
+            <input type="text" id="${endpointId}" class="form-control sample-endpoint-input"
+                   value="${DomHelpers.escapeHtml(col.api_endpoint || '')}"
+                   placeholder="${DomHelpers.escapeHtml(endpointPlaceholder(col.provider))}">
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0 0;">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label data-i18n="settings:custom_instructions_label">Custom Instructions</label>
+                <select id="${ciId}" class="form-control sample-instructions-select">${ciOptions}</select>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label data-i18n="settings:glossary_label">Glossary</label>
+                <select id="${glossaryId}" class="form-control sample-glossary-select">${glossaryOptions}</select>
+            </div>
+        </div>
     `;
 
     const removeBtn = card.querySelector('.sample-column-remove');
     removeBtn.addEventListener('click', () => removeColumn(idx));
 
+    const applyBtn = card.querySelector('.sample-apply-settings');
+    if (applyBtn) applyBtn.addEventListener('click', () => applyColumnToSettings(idx));
+
     // Defer SearchableSelect setup until the card is in the DOM — the
     // factory inserts its wrapper next to the original <select>.
     setTimeout(async () => {
+        // If a later render() already replaced this card before our timer
+        // fired, bail: getElementById(providerId) would resolve to the NEW
+        // card's element (same id), and we'd wire a SearchableSelect whose
+        // onChange closure captures THIS detached card's endpoint wrapper —
+        // leaving the visible card's endpoint toggle dead.
+        if (!card.isConnected) return;
         const providerSelectEl = document.getElementById(providerId);
         const modelSelectEl = document.getElementById(modelId);
+        const endpointWrap = card.querySelector('.sample-column-endpoint');
+        const endpointInput = document.getElementById(endpointId);
         if (!providerSelectEl || !modelSelectEl) return;
 
         attachProviderSearchable(providerSelectEl, {
             onChange: async (newProvider) => {
                 col.provider = newProvider;
                 col.model = '';
+                // The endpoint field applies to ollama + openai. Reset it to the
+                // new provider's Settings default (endpoints are provider-specific
+                // — an OpenAI URL is meaningless for Ollama and vice versa).
+                col.api_endpoint = settingsEndpoints[newProvider] || '';
+                if (endpointWrap) endpointWrap.style.display = ENDPOINT_PROVIDERS.has(newProvider) ? '' : 'none';
+                if (endpointInput) {
+                    endpointInput.value = col.api_endpoint;
+                    endpointInput.placeholder = endpointPlaceholder(newProvider);
+                }
                 await loadAndPopulateModelsForColumn(col, modelSelectEl);
                 refreshResultsFromCache();
             },
         });
         sampleSearchableIds.add(providerId);
+
+        if (endpointInput) {
+            // Re-list models from the custom endpoint on commit (blur/Enter),
+            // not on every keystroke, to avoid hammering the server.
+            endpointInput.addEventListener('change', async () => {
+                col.api_endpoint = endpointInput.value.trim();
+                await loadAndPopulateModelsForColumn(col, modelSelectEl);
+                refreshResultsFromCache();
+            });
+        }
 
         attachModelSearchable(modelSelectEl, {
             onChange: (value) => {
@@ -266,6 +449,22 @@ function buildColumnCard(idx, col) {
             },
         });
         sampleSearchableIds.add(modelId);
+
+        const ciSelectEl = document.getElementById(ciId);
+        if (ciSelectEl) {
+            ciSelectEl.addEventListener('change', () => {
+                col.custom_instruction_file = ciSelectEl.value;
+                refreshResultsFromCache();
+            });
+        }
+
+        const glossarySelectEl = document.getElementById(glossaryId);
+        if (glossarySelectEl) {
+            glossarySelectEl.addEventListener('change', () => {
+                col.glossary_id = glossarySelectEl.value;
+                refreshResultsFromCache();
+            });
+        }
 
         await loadAndPopulateModelsForColumn(col, modelSelectEl);
         refreshResultsFromCache();
@@ -289,9 +488,9 @@ function renderColumns() {
     });
     applyToDOM(container);
     const addBtn = $('sampleAddColumnBtn');
-    if (addBtn) addBtn.disabled = state.columns.length >= MAX_COLUMNS;
+    if (addBtn) addBtn.disabled = state.running;
     document.querySelectorAll('#sampleColumns .sample-column-remove').forEach((btn) => {
-        btn.disabled = state.columns.length <= 1;
+        btn.disabled = state.running || state.columns.length <= 1;
     });
 }
 
@@ -344,12 +543,14 @@ function refreshResultsFromCache() {
 }
 
 function addColumn() {
-    if (state.columns.length >= MAX_COLUMNS) return;
     state.columns.push({
         provider: 'ollama',
         model: '',
-        temperature: 0.3,
-        context_window: 4096,
+        // Defaults to the Settings endpoint for the provider (ollama here);
+        // resets to the new provider's default when the provider changes.
+        api_endpoint: settingsEndpoints.ollama || '',
+        custom_instruction_file: '', // per-LLM custom-instruction preset ('' = none)
+        glossary_id: '',             // per-LLM glossary ('' = none)
     });
     renderColumns();
     refreshResultsFromCache();
@@ -362,11 +563,111 @@ function removeColumn(idx) {
     refreshResultsFromCache();
 }
 
+/**
+ * Sync the Settings model picker to `model` once the provider's models have
+ * loaded. Selecting a provider kicks off an async model fetch; we wait for the
+ * option to appear, then set it (updating both the value and the searchable
+ * display). Falls back to a custom value if it never shows up.
+ */
+function applyModelToSettings(model, attempt = 0) {
+    const sel = $('model');
+    const inst = SearchableSelectFactory.get('model');
+    if (!sel || !inst) return;
+    const exists = Array.from(sel.options).some((o) => o.value === model);
+    if (exists || attempt >= 25) {
+        inst.setValue(model); // option present → select it; else custom value
+        return;
+    }
+    setTimeout(() => applyModelToSettings(model, attempt + 1), 200);
+}
+
+/**
+ * Push one LLM column's configuration into the app's general Settings form
+ * (provider, model, endpoint, custom instructions, glossary), then enable the
+ * Settings "Save" button so the user can persist it. Temperature and context
+ * window aren't part of the global Settings, so they're not applied.
+ */
+function applyColumnToSettings(idx) {
+    const col = state.columns[idx];
+    if (!col) return;
+
+    // Endpoint (per provider) — set before the provider change so the model
+    // fetch targets the right server.
+    if (col.provider === 'ollama' && col.api_endpoint) {
+        DomHelpers.setValue('apiEndpoint', col.api_endpoint);
+    } else if (col.provider === 'openai' && col.api_endpoint) {
+        DomHelpers.setValue('openaiEndpoint', col.api_endpoint);
+    }
+
+    // Custom instructions + glossary (plain selects in Settings).
+    DomHelpers.setValue('customInstructionSelect', col.custom_instruction_file || '');
+    DomHelpers.setValue('glossarySelect', col.glossary_id ? String(col.glossary_id) : '');
+
+    // Provider via its SearchableSelect → updates the display AND dispatches a
+    // change event, which triggers Settings to (re)load that provider's models.
+    const provInst = SearchableSelectFactory.get('llmProvider');
+    if (provInst) {
+        provInst.setValue(col.provider);
+    } else {
+        DomHelpers.setValue('llmProvider', col.provider);
+        $('llmProvider')?.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    // Model: select once the freshly-loaded option exists.
+    if (col.model) applyModelToSettings(col.model);
+
+    // Enable the Settings Save button so the change can be persisted to .env.
+    if (typeof SettingsManager._markEnvDirty === 'function') SettingsManager._markEnvDirty();
+
+    showSampleMessage(t('sample:applied_to_settings'), 'success');
+}
+
 function setMode(mode) {
     state.mode = mode;
     document.querySelectorAll('#sampleModeButtons .sample-mode-btn').forEach((btn) => {
         btn.classList.toggle('sample-mode-btn-active', btn.dataset.mode === mode);
     });
+}
+
+/**
+ * Set the Sample-tab source-language <select> by language name, matching
+ * options case-insensitively. Returns false if the language isn't an option.
+ */
+function setSampleSourceLang(languageValue) {
+    const select = $('sampleSourceLang');
+    if (!select || !languageValue || languageValue === 'Other') return false;
+    for (const opt of select.options) {
+        if (opt.value && opt.value.toLowerCase() === languageValue.toLowerCase()) {
+            select.value = opt.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Auto-detect the source language of the uploaded file and reflect it in the
+ * source-language picker, so the user sees the detection immediately on drop
+ * instead of leaving it on "Auto-detect". Best-effort: only applies on a
+ * confident match (>= 0.7); silent on failure (the Run still auto-detects).
+ */
+async function detectAndSetSourceLanguage() {
+    if (!state.uploadedPath) return;
+    try {
+        const result = await ApiClient.detectLanguage(state.uploadedPath);
+        if (result && result.success && result.detected_language && (result.language_confidence || 0) >= 0.7) {
+            const matched = setSampleSourceLang(result.detected_language);
+            if (!matched) {
+                showSampleMessage(
+                    t('translation:lang_detected_not_in_list', { lang: result.detected_language }),
+                    'info',
+                );
+            }
+        }
+    } catch (err) {
+        console.warn('[sample] language detection failed', err);
+    }
 }
 
 async function uploadFileIfNeeded() {
@@ -417,11 +718,11 @@ function updateFileCard() {
 }
 
 function iconForFileType(ft) {
-    const t = (ft || '').toLowerCase();
-    if (t === 'epub') return 'menu_book';
-    if (t === 'srt')  return 'closed_caption';
-    if (t === 'docx') return 'description';
-    if (t === 'txt')  return 'article';
+    const ext = (ft || '').toLowerCase();
+    if (ext === 'epub') return 'menu_book';
+    if (ext === 'srt')  return 'closed_caption';
+    if (ext === 'docx') return 'description';
+    if (ext === 'txt')  return 'article';
     return 'description';
 }
 
@@ -467,6 +768,9 @@ async function initializeSamples() {
         showSampleMessage(err.message || String(err), 'error');
         return;
     }
+    // Reflect the detected source language in the picker right away; runs in
+    // parallel so it never delays the sample cards.
+    detectAndSetSourceLanguage();
     await _runInitialize({ preserveContext: false });
 }
 
@@ -509,11 +813,7 @@ async function _runInitialize({ preserveContext }) {
         if (!preserveContext) {
             state.lastRunContext = null;
         }
-        if (warningsBox && body.warnings && body.warnings.length > 0) {
-            warningsBox.innerHTML = body.warnings.map((w) =>
-                `<div class="sample-warning">⚠ ${w}</div>`
-            ).join('');
-        }
+        renderWarnings(warningsBox, body.warnings);
         refreshResultsFromCache();
         syncUpdateButton();
     } catch (err) {
@@ -599,18 +899,25 @@ function buildRunPayload({ defer = false } = {}) {
     const sourceLang = $('sampleSourceLang')?.value || '';
     const targetLang = $('sampleTargetLang')?.value || '';
     const nSamples = parseInt($('sampleNSamples')?.value, 10) || 5;
-    const maxChars = parseInt($('sampleMaxChars')?.value, 10) || 800;
+    const maxChars = parseInt($('sampleMaxChars')?.value, 10) || 180;
 
     const columns = state.columns.map((col) => ({
         provider: col.provider,
         model: col.model,
-        temperature: col.temperature,
-        context_window: col.context_window,
         api_key: '__USE_ENV__',
+        // ollama + openai columns carry a custom endpoint; '' falls back to the
+        // server config in _instantiate_provider.
+        api_endpoint: columnEndpoint(col),
+        // Per-LLM custom-instruction preset (file in Custom_Instructions/),
+        // resolved server-side per column.
+        custom_instruction_file: col.custom_instruction_file || '',
+        // Per-LLM glossary; resolved + filtered per cell server-side.
+        glossary_id: col.glossary_id || null,
     }));
 
+    // custom_instructions is now per-column (custom_instruction_file above);
+    // these two stay run-wide.
     const promptOptions = {
-        custom_instructions: $('customInstructionsTextarea')?.value || '',
         preserve_technical_content: $('preserveTechnicalContent')?.checked || false,
         text_cleanup: $('textCleanup')?.checked || false,
     };
@@ -625,7 +932,6 @@ function buildRunPayload({ defer = false } = {}) {
         max_chars: maxChars,
         columns,
         prompt_options: promptOptions,
-        glossary_id: $('glossarySelect')?.value || null,
         defer_dispatch: defer,
     };
 
@@ -700,7 +1006,6 @@ async function runSample(opts = {}) {
     // yet spend any LLM tokens. We need the actual extracts before we can know
     // which cells are cached.
     const payload = buildRunPayload({ defer: true });
-    console.log('[sample] POST /api/sample/run (defer)', payload);
 
     let resp;
     try {
@@ -727,7 +1032,7 @@ async function runSample(opts = {}) {
         source_lang: payload.source_language,
         target_lang: payload.target_language,
         prompt_options: payload.prompt_options,
-        glossary_id: payload.glossary_id,
+        // glossary is per-column now (see buildCellKey), not run-wide.
     };
 
     // Phase 2 — compute cache hits, render the table (cached cells show their
@@ -777,11 +1082,7 @@ async function runSample(opts = {}) {
     syncSampleEditButtons();
     $('sampleCopyMdBtn').disabled = false;
 
-    if (warningsBox && resp.warnings && resp.warnings.length > 0) {
-        warningsBox.innerHTML = resp.warnings.map((w) =>
-            `<div class="sample-warning">⚠ ${w}</div>`
-        ).join('');
-    }
+    renderWarnings(warningsBox, resp.warnings);
 
     // Phase 3 — kick off the LLM work for non-cached cells. Server will emit
     // sample_done once finished (including when every cell is skipped).
@@ -1007,13 +1308,21 @@ function rerenderOnLocale() {
 
 export const SampleManager = {
     init() {
+        // addColumn() already renders; only render here when we didn't add one,
+        // to avoid a double render() whose overlapping setTimeouts race on the
+        // shared SearchableSelect ids.
         if (state.columns.length === 0) addColumn();
-        renderColumns();
+        else renderColumns();
         wireFileInput();
         wireButtons();
         rerenderOnLocale();
         WebSocketManager.on('sample_update', handleSampleUpdate);
         setMode('translate');
+        // Seed default endpoints from Settings; backfills + re-renders columns.
+        loadSettingsEndpoints();
+        // Load custom-instruction presets and glossaries for the per-LLM pickers.
+        loadCustomInstructionFiles();
+        loadGlossaries();
     },
     addColumn,
     removeColumn,

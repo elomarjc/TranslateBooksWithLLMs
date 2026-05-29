@@ -10,16 +10,11 @@
  */
 
 import { t } from '../i18n/i18n.js';
+import { DomHelpers } from '../ui/dom-helpers.js';
 import { inlineDiff } from './sample-diff.js';
 
-function escapeHtml(s) {
-    return String(s == null ? '' : s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+// Shared HTML escaper (was a local copy here and in sample-diff.js).
+const escapeHtml = DomHelpers.escapeHtml;
 
 function formatLatency(ms) {
     if (ms == null) return '–';

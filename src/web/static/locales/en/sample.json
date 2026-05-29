@@ -1,6 +1,6 @@
 {
   "title": "Sample & Compare",
-  "subtitle": "Run up to 4 LLM configurations side-by-side on a few extracts from your book — no full translation needed.",
+  "subtitle": "Run multiple LLM configurations side-by-side on a few extracts from your book — no full translation needed.",
 
   "drop_file_title": "Drop a book to sample",
   "drop_file_support": "Support for TXT, EPUB, SRT, and DOCX",
@@ -21,6 +21,9 @@
   "llm_label": "LLM {{index}}",
   "add_llm": "Add an LLM",
   "remove_llm": "Remove this LLM",
+  "apply_to_settings_title": "Apply this LLM's configuration to the app settings",
+  "apply_to_settings": "Send to settings",
+  "applied_to_settings": "Applied to the app settings",
 
   "run": "Run",
   "stop": "Stop",
@@ -42,6 +45,7 @@
   "badge_error": "error",
 
   "warning_small_document": "Document has only {{total}} chunks; sampled {{count}} interior chunks instead of {{requested}}.",
+  "warning_lang_autodetected": "Source language auto-detected as {{lang}} (confidence {{confidence}}%).",
 
   "run_done": "Sample run completed.",
   "run_stopped": "Sample run stopped.",

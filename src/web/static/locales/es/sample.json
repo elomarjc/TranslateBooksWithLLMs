@@ -1,6 +1,6 @@
 {
   "title": "Muestrear y Comparar",
-  "subtitle": "Compara hasta 4 configuraciones de LLM en paralelo sobre algunos extractos de tu libro — sin necesidad de una traducción completa.",
+  "subtitle": "Compara varias configuraciones de LLM en paralelo sobre algunos extractos de tu libro — sin necesidad de una traducción completa.",
 
   "drop_file_title": "Suelta un libro para muestrear",
   "drop_file_support": "Compatible con TXT, EPUB, SRT y DOCX",
@@ -21,6 +21,9 @@
   "llm_label": "LLM {{index}}",
   "add_llm": "Añadir un LLM",
   "remove_llm": "Eliminar este LLM",
+  "apply_to_settings_title": "Aplicar la configuración de este LLM a los ajustes de la aplicación",
+  "apply_to_settings": "Enviar a los ajustes",
+  "applied_to_settings": "Aplicado a los ajustes de la aplicación",
 
   "run": "Ejecutar",
   "stop": "Detener",
@@ -42,6 +45,7 @@
   "badge_error": "error",
 
   "warning_small_document": "El documento solo tiene {{total}} fragmentos; se muestrearon {{count}} fragmentos internos en lugar de {{requested}}.",
+  "warning_lang_autodetected": "Idioma de origen detectado automáticamente: {{lang}} (confianza {{confidence}} %).",
 
   "run_done": "Muestreo completado.",
   "run_stopped": "Muestreo detenido.",
