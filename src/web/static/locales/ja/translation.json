@@ -134,6 +134,12 @@
   "resume_network_error_log": "❌ ネットワークエラー: {{error}}",
   "resumed_translation_default": "再開した翻訳",
   "resuming_file": "再開中: {{name}}",
+  "resume_change_model": "モデルを変更",
+  "resume_change_model_title": "別のモデルまたはプロバイダーで再開",
+  "resume_original_model": "元のモデル",
+  "resume_style_warning": "書籍の途中でモデルを切り替えると、翻訳済みの部分と残りの部分の間で文体が変わる可能性があります。",
+  "resume_apply_btn": "このモデルで再開",
+  "resume_no_model_selected": "再開する前にモデルを選択してください。",
 
   "confirm_delete_checkpoint": "このチェックポイントを削除してもよろしいですか?\n\nこの操作は取り消せず、すべての進捗が失われます。",
   "deleting_checkpoint_log": "🗑️ チェックポイント {{id}} を削除中...",

@@ -134,6 +134,12 @@
   "resume_network_error_log": "❌ Network error: {{error}}",
   "resumed_translation_default": "Resumed Translation",
   "resuming_file": "Resuming: {{name}}",
+  "resume_change_model": "Change model",
+  "resume_change_model_title": "Resume with a different model or provider",
+  "resume_original_model": "Original model",
+  "resume_style_warning": "Switching model mid-book may cause a style break between the already-translated and remaining chunks.",
+  "resume_apply_btn": "Resume with this model",
+  "resume_no_model_selected": "Select a model before resuming.",
 
   "confirm_delete_checkpoint": "Are you sure you want to delete this checkpoint?\n\nThis action is irreversible and you will lose all progress.",
   "deleting_checkpoint_log": "🗑️ Deleting checkpoint {{id}}...",

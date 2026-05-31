@@ -134,6 +134,12 @@
   "resume_network_error_log": "❌ Netzwerkfehler: {{error}}",
   "resumed_translation_default": "Fortgesetzte Übersetzung",
   "resuming_file": "Wird fortgesetzt: {{name}}",
+  "resume_change_model": "Modell ändern",
+  "resume_change_model_title": "Mit einem anderen Modell oder Anbieter fortsetzen",
+  "resume_original_model": "Ursprüngliches Modell",
+  "resume_style_warning": "Ein Modellwechsel mitten im Buch kann zu einem Stilbruch zwischen den bereits übersetzten und den verbleibenden Abschnitten führen.",
+  "resume_apply_btn": "Mit diesem Modell fortsetzen",
+  "resume_no_model_selected": "Wählen Sie ein Modell aus, bevor Sie fortfahren.",
 
   "confirm_delete_checkpoint": "Möchten Sie diesen Checkpoint wirklich löschen?\n\nDiese Aktion ist unumkehrbar und Sie verlieren den gesamten Fortschritt.",
   "deleting_checkpoint_log": "🗑️ Checkpoint {{id}} wird gelöscht...",

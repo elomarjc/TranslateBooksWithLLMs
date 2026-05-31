@@ -31,6 +31,72 @@ def _resolve_api_key(value, env_var_name):
     return value
 
 
+# Cloud providers whose key lives in config['<provider>_api_key'] and env var
+# '<PROVIDER>_API_KEY'. The mapping is mechanical, so supporting a new provider
+# in the resume-override path requires only adding it here (and nowhere else in
+# this file).
+_KEY_PROVIDERS = ('gemini', 'openai', 'openrouter', 'mistral', 'deepseek', 'poe', 'nim')
+
+# Providers that talk to a user-supplied endpoint; the others use a built-in one.
+_ENDPOINT_PROVIDERS = ('ollama', 'openai')
+
+
+def _apply_resume_overrides(config, overrides):
+    """Merge optional model/provider override fields into a resume config in place.
+
+    Lets the resume request switch model/provider for the remaining chunks
+    (issue #183). An empty/absent body leaves `config` untouched, so existing
+    behavior is preserved. API keys flow through `_resolve_api_key` exactly like
+    the start endpoint, and a multi-key string is passed through unchanged so the
+    key-rotation pool still works.
+
+    Returns a Flask (response, status) tuple to abort with on validation failure,
+    or None on success.
+    """
+    if not isinstance(overrides, dict) or not overrides:
+        return None
+
+    if overrides.get('model'):
+        config['model'] = overrides['model']
+    if overrides.get('llm_provider'):
+        config['llm_provider'] = str(overrides['llm_provider']).lower()
+    if overrides.get('llm_api_endpoint'):
+        config['llm_api_endpoint'] = overrides['llm_api_endpoint']
+    if overrides.get('context_window') is not None:
+        try:
+            config['context_window'] = int(overrides['context_window'])
+        except (TypeError, ValueError):
+            return jsonify({"error": "context_window must be an integer"}), 400
+
+    provider = (config.get('llm_provider') or 'ollama').lower()
+
+    # A single generic api_key override maps to the chosen provider's key field,
+    # resolved through .env like every other entry point.
+    raw_key = overrides.get('api_key')
+    if provider in _KEY_PROVIDERS and raw_key not in (None, ''):
+        env_var = f"{provider.upper()}_API_KEY"
+        config[f"{provider}_api_key"] = _resolve_api_key(raw_key, env_var)
+
+    # A cloud provider needs a key from the override, the restored config, or .env.
+    if provider in _KEY_PROVIDERS:
+        env_var = f"{provider.upper()}_API_KEY"
+        if not (config.get(f"{provider}_api_key") or os.getenv(env_var)):
+            return jsonify({
+                "error": "Missing API key for provider",
+                "message": (f"Resuming with '{provider}' requires an API key. "
+                            f"Set {env_var} in .env or include it in the request."),
+            }), 400
+
+    # Endpoint-driven providers need an endpoint to talk to.
+    if provider in _ENDPOINT_PROVIDERS and not config.get('llm_api_endpoint'):
+        return jsonify({
+            "error": "Missing API endpoint for provider",
+            "message": f"Resuming with '{provider}' requires an API endpoint.",
+        }), 400
+
+    return None
+
+
 def create_translation_blueprint(state_manager, start_translation_job):
     """
     Create and configure the translation blueprint
@@ -187,8 +253,18 @@ def create_translation_blueprint(state_manager, start_translation_job):
 
     @bp.route('/api/resumable', methods=['GET'])
     def list_resumable_jobs():
-        """List all jobs that can be resumed"""
+        """List all jobs that can be resumed.
+
+        Each job carries its full `config`, which holds resolved API keys. Strip
+        every '*_api_key' before sending it to the browser — the resume endpoint
+        reads keys server-side from the checkpoint, so the client never needs them.
+        """
         resumable_jobs = state_manager.get_resumable_jobs()
+        for job in resumable_jobs:
+            cfg = job.get('config')
+            if isinstance(cfg, dict):
+                for key in [k for k in cfg if k.endswith('_api_key')]:
+                    cfg.pop(key, None)
         return jsonify({"resumable_jobs": resumable_jobs})
 
     @bp.route('/api/resume/<translation_id>', methods=['POST'])
@@ -259,6 +335,13 @@ def create_translation_blueprint(state_manager, start_translation_job):
         config['resume_from_index'] = checkpoint_data['resume_from_index']
         config['is_resume'] = True
 
+        # Optional model/provider overrides for the remaining chunks (issue #183).
+        # No body = unchanged behavior.
+        overrides = request.get_json(silent=True) or {}
+        override_error = _apply_resume_overrides(config, overrides)
+        if override_error is not None:
+            return override_error
+
         # Mark as running in database
         state_manager.checkpoint_manager.mark_running(translation_id)
 
@@ -268,7 +351,9 @@ def create_translation_blueprint(state_manager, start_translation_job):
         return jsonify({
             "translation_id": translation_id,
             "message": "Translation resumed successfully",
-            "resume_from_chunk": checkpoint_data['resume_from_index']
+            "resume_from_chunk": checkpoint_data['resume_from_index'],
+            "model": config.get('model'),
+            "llm_provider": config.get('llm_provider')
         }), 200
 
     @bp.route('/api/checkpoint/<translation_id>', methods=['DELETE'])

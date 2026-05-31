@@ -6,6 +6,8 @@
   "ai_provider": "AI Provider",
   "api_endpoint": "API Endpoint",
   "api_key": "API Key",
+  "api_key_optional": "API key (optional)",
+  "api_key_env_placeholder": "Leave blank to use the key from .env",
   "model": "Model",
   "reset_endpoint_title": "Reset to server configuration",
   "endpoint_custom_badge": "custom",

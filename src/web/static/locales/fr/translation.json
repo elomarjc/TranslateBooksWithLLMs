@@ -134,6 +134,12 @@
   "resume_network_error_log": "❌ Erreur réseau : {{error}}",
   "resumed_translation_default": "Traduction reprise",
   "resuming_file": "Reprise : {{name}}",
+  "resume_change_model": "Changer de modèle",
+  "resume_change_model_title": "Reprendre avec un autre modèle ou fournisseur",
+  "resume_original_model": "Modèle d'origine",
+  "resume_style_warning": "Changer de modèle en cours de livre peut créer une rupture de style entre les segments déjà traduits et les suivants.",
+  "resume_apply_btn": "Reprendre avec ce modèle",
+  "resume_no_model_selected": "Sélectionnez un modèle avant de reprendre.",
 
   "confirm_delete_checkpoint": "Êtes-vous sûr de vouloir supprimer ce point de reprise ?\n\nCette action est irréversible et vous perdrez toute la progression.",
   "deleting_checkpoint_log": "🗑️ Suppression du point de reprise {{id}}...",

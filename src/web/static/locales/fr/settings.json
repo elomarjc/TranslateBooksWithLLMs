@@ -6,6 +6,8 @@
   "ai_provider": "Fournisseur d'IA",
   "api_endpoint": "Point d'accès API",
   "api_key": "Clé API",
+  "api_key_optional": "Clé API (facultatif)",
+  "api_key_env_placeholder": "Laisser vide pour utiliser la clé du .env",
   "model": "Modèle",
   "reset_endpoint_title": "Réinitialiser à la configuration du serveur",
   "endpoint_custom_badge": "personnalisé",

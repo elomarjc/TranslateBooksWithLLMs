@@ -6,6 +6,8 @@
   "ai_provider": "KI-Anbieter",
   "api_endpoint": "API-Endpunkt",
   "api_key": "API-Schlüssel",
+  "api_key_optional": "API-Schlüssel (optional)",
+  "api_key_env_placeholder": "Leer lassen, um den Schlüssel aus .env zu verwenden",
   "model": "Modell",
   "reset_endpoint_title": "Auf Server-Konfiguration zurücksetzen",
   "endpoint_custom_badge": "benutzerdefiniert",

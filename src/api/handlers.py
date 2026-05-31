@@ -258,7 +258,16 @@ async def perform_actual_translation(translation_id, config, state_manager, outp
             'api_endpoint': config['llm_api_endpoint'],
             'chunk_size': config.get('chunk_size', 'default')
         })
-        
+
+        # Make the resumed portion's model/provider explicit in the job log so a
+        # resume that switched model/provider (issue #183) is auditable.
+        if is_resume:
+            _log_message_callback(
+                "resume_model_info",
+                f"↻ Resuming from chunk {resume_from_index} using "
+                f"{config.get('llm_provider', 'ollama')} / {config['model']}."
+            )
+
         input_path_for_translate_module = config.get('file_path')
 
         # Handle special case for TXT with inline text content (no file upload)

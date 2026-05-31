@@ -332,14 +332,19 @@ export const ApiClient = {
     },
 
     /**
-     * Resume a paused job
+     * Resume a paused job, optionally overriding model/provider for the
+     * remaining chunks. With no overrides the body is empty and the server
+     * keeps the original config (backward compatible).
      * @param {string} translationId - Translation ID to resume
+     * @param {Object} [overrides] - Optional {model, llm_provider, llm_api_endpoint, api_key, context_window}
      * @returns {Promise<Object>} Resume result
      */
-    async resumeJob(translationId) {
-        return await apiRequest(`/api/resume/${translationId}`, {
-            method: 'POST'
-        });
+    async resumeJob(translationId, overrides = null) {
+        const options = { method: 'POST' };
+        if (overrides && Object.keys(overrides).length > 0) {
+            options.body = JSON.stringify(overrides);
+        }
+        return await apiRequest(`/api/resume/${translationId}`, options);
     },
 
     /**

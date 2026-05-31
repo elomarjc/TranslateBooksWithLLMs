@@ -6,6 +6,8 @@
   "ai_provider": "AI 服务商",
   "api_endpoint": "API 端点",
   "api_key": "API 密钥",
+  "api_key_optional": "API 密钥（可选）",
+  "api_key_env_placeholder": "留空以使用 .env 中的密钥",
   "model": "模型",
   "reset_endpoint_title": "重置为服务器配置",
   "endpoint_custom_badge": "自定义",

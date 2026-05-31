@@ -10,7 +10,17 @@ import { ApiClient } from '../core/api-client.js';
 import { MessageLogger } from '../ui/message-logger.js';
 import { DomHelpers } from '../ui/dom-helpers.js';
 import { ProgressManager } from './progress-manager.js';
-import { t, getCurrentLocale } from '../i18n/i18n.js';
+import { t, getCurrentLocale, applyToDOM } from '../i18n/i18n.js';
+import { createProviderModelPicker } from '../providers/provider-model-picker.js';
+
+// Live picker instances, keyed by translation_id, so the override panel keeps
+// its state while open and can be cleaned up on the next list render.
+const overridePickers = new Map();
+
+function destroyOverridePickers() {
+    overridePickers.forEach((p) => p.destroy?.());
+    overridePickers.clear();
+}
 
 /**
  * Format resumable job card HTML
@@ -61,6 +71,14 @@ function formatJobCard(job, hasActiveTranslation, activeNames) {
         ? t('translation:cannot_resume_in_progress_title')
         : t('translation:resume_btn_title');
 
+    // Original model/provider, used to seed the override picker and to show what
+    // the resumed portion would switch away from. Keys were already stripped
+    // server-side from job.config.
+    const cfg = job.config || {};
+    const origProvider = cfg.llm_provider || 'ollama';
+    const origModel = cfg.model || '';
+    const origEndpoint = cfg.llm_api_endpoint || '';
+
     return `
         <div class="resumable-job-card" style="border: 1px solid #e5e7eb; padding: 20px; margin-bottom: 15px; border-radius: 8px; background: #f9fafb;">
             <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px; gap: 15px;">
@@ -97,9 +115,38 @@ function formatJobCard(job, hasActiveTranslation, activeNames) {
                 </div>
             </div>
 
-            <div style="display: flex; gap: 20px; font-size: 12px; color: #9ca3af;">
-                <span>${t('translation:job_card_created', { date: createdDate })}</span>
-                <span>${t('translation:job_card_paused', { date: pausedDate })}</span>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 20px; font-size: 12px; color: #9ca3af;">
+                <div style="display: flex; gap: 20px;">
+                    <span>${t('translation:job_card_created', { date: createdDate })}</span>
+                    <span>${t('translation:job_card_paused', { date: pausedDate })}</span>
+                </div>
+                <button class="resume-change-model" data-tid="${job.translation_id}"
+                        title="${t('translation:resume_change_model_title')}"
+                        ${hasActiveTranslation ? 'disabled' : ''}
+                        style="display: inline-flex; align-items: center; gap: 4px; background: none; border: none; padding: 2px 4px; font-size: 12px; color: #3b82f6; cursor: pointer; white-space: nowrap;${hasActiveTranslation ? ' opacity: 0.5; cursor: not-allowed;' : ''}">
+                    <span class="material-symbols-outlined" style="font-size: 0.95rem;">tune</span>
+                    <span data-i18n="translation:resume_change_model">Change model</span>
+                </button>
+            </div>
+
+            <div class="resume-override" data-tid="${job.translation_id}"
+                 data-provider="${DomHelpers.escapeHtml(origProvider)}"
+                 data-model="${DomHelpers.escapeHtml(origModel)}"
+                 data-endpoint="${DomHelpers.escapeHtml(origEndpoint)}"
+                 style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #e5e7eb;">
+                <div style="font-size: 12px; color: #6b7280; margin-bottom: 10px;">
+                    <span data-i18n="translation:resume_original_model">Original model</span>:
+                    <strong>${DomHelpers.escapeHtml(origProvider)} / ${DomHelpers.escapeHtml(origModel || '—')}</strong>
+                </div>
+                <div class="resume-picker-mount"></div>
+                <div class="resume-style-warning" style="display: none; margin-top: 10px; font-size: 12px; color: #92400e; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 8px;">
+                    ⚠️ <span data-i18n="translation:resume_style_warning">Switching model mid-book may cause a style break between the already-translated and remaining chunks.</span>
+                </div>
+                <div style="margin-top: 12px;">
+                    <button class="btn btn-primary resume-apply" data-tid="${job.translation_id}" data-i18n="translation:resume_apply_btn">
+                        Resume with this model
+                    </button>
+                </div>
             </div>
         </div>
     `;
@@ -128,6 +175,74 @@ function createWarningBanner(activeJobs) {
             </div>
         </div>
     `;
+}
+
+/**
+ * Lazily build the provider+model picker the first time a job's override panel
+ * is opened. Seeds it with the job's original config and toggles the style-break
+ * warning whenever the chosen model/provider diverges from the original.
+ */
+function ensureOverridePicker(panel) {
+    const tid = panel.dataset.tid;
+    if (overridePickers.has(tid)) return;
+    const mount = panel.querySelector('.resume-picker-mount');
+    const warning = panel.querySelector('.resume-style-warning');
+    if (!mount) return;
+
+    const origProvider = panel.dataset.provider || 'ollama';
+    const origModel = panel.dataset.model || '';
+    const origEndpoint = panel.dataset.endpoint || '';
+
+    const picker = createProviderModelPicker(mount, {
+        config: { provider: origProvider, model: origModel, api_endpoint: origEndpoint },
+        onChange: (cfg) => {
+            const changed = (cfg.provider !== origProvider) || (cfg.model && cfg.model !== origModel);
+            if (warning) warning.style.display = changed ? 'block' : 'none';
+        },
+    });
+    overridePickers.set(tid, picker);
+}
+
+/**
+ * Wire the "Change model" toggles and "Resume with this model" buttons inside a
+ * freshly rendered resumable-jobs list. Pickers are created on first open only.
+ */
+function wireResumeOverrides(container) {
+    container.querySelectorAll('.resume-change-model').forEach((btn) => {
+        if (btn.disabled) return;
+        btn.addEventListener('click', () => {
+            const card = btn.closest('.resumable-job-card');
+            const panel = card && card.querySelector('.resume-override');
+            if (!panel) return;
+            if (panel.style.display !== 'none') {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = 'block';
+            ensureOverridePicker(panel);
+        });
+    });
+
+    container.querySelectorAll('.resume-apply').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const tid = btn.dataset.tid;
+            const picker = overridePickers.get(tid);
+            const cfg = picker ? picker.getConfig() : null;
+            if (cfg && !cfg.model) {
+                MessageLogger.showMessage(t('translation:resume_no_model_selected'), 'error');
+                return;
+            }
+            // Map the picker's generic field names onto the backend override
+            // schema (llm_provider / llm_api_endpoint).
+            let overrides = null;
+            if (cfg) {
+                overrides = { model: cfg.model, llm_provider: cfg.provider };
+                if (cfg.api_endpoint) overrides.llm_api_endpoint = cfg.api_endpoint;
+                if (cfg.api_key) overrides.api_key = cfg.api_key;
+            }
+            ResumeManager.resumeJob(tid, overrides);
+        });
+    });
 }
 
 export const ResumeManager = {
@@ -178,7 +293,13 @@ export const ResumeManager = {
                 return;
             }
 
+            // Drop pickers from the previous render before wiping their DOM.
+            destroyOverridePickers();
             listContainer.innerHTML = warningBanner + jobsHtml;
+            // Translate the freshly injected data-i18n markup, then wire the
+            // override toggles / apply buttons.
+            applyToDOM(listContainer);
+            wireResumeOverrides(listContainer);
 
             MessageLogger.addLog(t('translation:paused_count_log', { count: jobs.length }));
 
@@ -198,8 +319,9 @@ export const ResumeManager = {
     /**
      * Resume a paused translation job
      * @param {string} translationId - Translation ID to resume
+     * @param {Object} [overrides] - Optional model/provider overrides for the remaining chunks
      */
-    async resumeJob(translationId) {
+    async resumeJob(translationId, overrides = null) {
         // Check if there's an active translation
         const hasActive = StateManager.getState('translation.hasActive') || false;
         const activeJobs = StateManager.getState('translation.activeJobs') || [];
@@ -221,7 +343,7 @@ export const ResumeManager = {
             MessageLogger.addLog(t('translation:resuming_log', { id: translationId }));
             MessageLogger.showMessage(t('translation:resuming_msg'), 'info');
 
-            const data = await ApiClient.resumeJob(translationId);
+            const data = await ApiClient.resumeJob(translationId, overrides);
 
             MessageLogger.showMessage(
                 t('translation:resume_success', { chunk: data.resume_from_chunk }),

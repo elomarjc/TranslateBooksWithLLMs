@@ -134,6 +134,12 @@
   "resume_network_error_log": "❌ Error de red: {{error}}",
   "resumed_translation_default": "Traducción reanudada",
   "resuming_file": "Reanudando: {{name}}",
+  "resume_change_model": "Cambiar modelo",
+  "resume_change_model_title": "Reanudar con otro modelo o proveedor",
+  "resume_original_model": "Modelo original",
+  "resume_style_warning": "Cambiar de modelo a mitad del libro puede provocar una ruptura de estilo entre los segmentos ya traducidos y los restantes.",
+  "resume_apply_btn": "Reanudar con este modelo",
+  "resume_no_model_selected": "Selecciona un modelo antes de reanudar.",
 
   "confirm_delete_checkpoint": "¿Seguro que quieres eliminar este punto de control?\n\nEsta acción es irreversible y perderás todo el progreso.",
   "deleting_checkpoint_log": "🗑️ Eliminando punto de control {{id}}...",

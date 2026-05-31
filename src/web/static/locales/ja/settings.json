@@ -6,6 +6,8 @@
   "ai_provider": "AI プロバイダー",
   "api_endpoint": "API エンドポイント",
   "api_key": "API キー",
+  "api_key_optional": "APIキー（任意）",
+  "api_key_env_placeholder": ".env のキーを使用する場合は空欄のままにします",
   "model": "モデル",
   "reset_endpoint_title": "サーバー設定にリセット",
   "endpoint_custom_badge": "カスタム",

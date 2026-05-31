@@ -134,6 +134,12 @@
   "resume_network_error_log": "❌ 网络错误：{{error}}",
   "resumed_translation_default": "已恢复的翻译",
   "resuming_file": "正在恢复：{{name}}",
+  "resume_change_model": "更换模型",
+  "resume_change_model_title": "使用其他模型或提供商继续",
+  "resume_original_model": "原始模型",
+  "resume_style_warning": "在书籍翻译中途切换模型可能导致已翻译部分与剩余部分之间出现风格断层。",
+  "resume_apply_btn": "使用此模型继续",
+  "resume_no_model_selected": "继续之前请先选择一个模型。",
 
   "confirm_delete_checkpoint": "确定要删除此检查点吗？\n\n此操作不可撤销，您将丢失所有进度。",
   "deleting_checkpoint_log": "🗑️ 正在删除检查点 {{id}}...",

@@ -6,6 +6,8 @@
   "ai_provider": "AI 제공자",
   "api_endpoint": "API 엔드포인트",
   "api_key": "API 키",
+  "api_key_optional": "API 키 (선택 사항)",
+  "api_key_env_placeholder": ".env의 키를 사용하려면 비워 두세요",
   "model": "모델",
   "reset_endpoint_title": "서버 설정으로 초기화",
   "endpoint_custom_badge": "사용자 지정",
