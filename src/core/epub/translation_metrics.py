@@ -271,30 +271,22 @@ class TranslationMetrics:
     def to_dict(self) -> Dict:
         """Convert metrics to dictionary for serialization.
 
-        For two-phase workflows (translation + refinement):
-        - total_chunks is doubled to reflect both phases
-        - completed_chunks accounts for both translation and refinement progress
-        - Phase 1 (translation): 0-50% of total work (0 to N chunks)
-        - Phase 2 (refinement): 50-100% of total work (N to 2N chunks)
-        
-        Note: We use processed_chunks for translation progress to avoid fluctuations
-        during retries. A chunk is only counted when fully processed (success or failure).
-        """
-        # Calculate total chunks and completed chunks based on refinement status
-        if self.enable_refinement:
-            # Two-phase workflow: double the total chunks
-            effective_total_chunks = self.total_chunks * 2
+        The chunk denominator is always the translation chunk count (no
+        doubling). In-translation refinement is a per-file polish pass that is
+        reported via logs and its own counter (refinement_chunks_completed),
+        but it does not inflate the progress denominator: once a file's
+        translation completes, the bar holds at that file's completion while
+        refinement runs.
 
-            if self.refinement_phase:
-                # In refinement phase: translation complete (N) + refinement progress
-                effective_completed = self.total_chunks + self.refinement_chunks_completed
-            else:
-                # In translation phase: use processed_chunks to avoid retry fluctuations
-                effective_completed = self.processed_chunks
+        processed_chunks (not success count) is used for translation progress
+        so the bar does not fluctuate during retries.
+        """
+        effective_total_chunks = self.total_chunks
+        if self.refinement_phase:
+            # Translation for this file is done; refinement does not advance
+            # the main progress denominator.
+            effective_completed = self.total_chunks
         else:
-            # Single-phase workflow: no adjustment needed
-            effective_total_chunks = self.total_chunks
-            # Use processed_chunks for consistent progress tracking
             effective_completed = self.processed_chunks
 
         return {

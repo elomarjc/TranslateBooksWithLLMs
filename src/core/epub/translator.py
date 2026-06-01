@@ -822,9 +822,10 @@ async def _process_all_content_files(
         plain_text_mode=plain_text_mode,
     )
 
-    # Check if refinement is enabled - this doubles the total work
-    enable_refinement = prompt_options and prompt_options.get('refine', False)
-    effective_total_chunks = total_chunks * 2 if enable_refinement else total_chunks
+    # The progress denominator is the translation chunk count. In-translation
+    # refinement (CLI --refine) is a per-file polish pass reported via logs; it
+    # no longer doubles the total.
+    effective_total_chunks = total_chunks
 
     # Start with restored documents
     parsed_xhtml_docs: Dict[str, etree._Element] = restored_docs.copy() if restored_docs else {}
@@ -888,31 +889,16 @@ async def _process_all_content_files(
             if not stats_callback:
                 return
 
-            # Calculate global completed chunks:
-            # completed_chunks_global = base (translation) chunks from previous files
-            # accumulated_stats.refinement_chunks_completed = refinement chunks from previous files
-            # current_file_completed = chunks completed in current file (already includes
-            #   N + refinement progress when the file is in its refinement phase, per
-            #   TranslationMetrics.to_dict)
+            # current_file_completed = the current file's completed chunks
+            # (TranslationMetrics.to_dict reports the file as fully complete once
+            # its translation finishes, so refinement does not advance this).
             current_file_completed = file_stats_dict.get('completed_chunks', 0)
-            enable_refinement = file_stats_dict.get('enable_refinement', False)
-            if enable_refinement:
-                # Without adding accumulated refinement progress here, every new file
-                # would reset global_completed to its translation-only baseline and the
-                # progress bar would regress at each file boundary by ~N chunks.
-                global_completed = (completed_chunks_global
-                                    + accumulated_stats.refinement_chunks_completed
-                                    + current_file_completed)
-            else:
-                global_completed = completed_chunks_global + current_file_completed
-
-            # When refinement is enabled, total work doubles (translation + refinement)
-            effective_total = total_chunks * 2 if enable_refinement else total_chunks
+            global_completed = completed_chunks_global + current_file_completed
 
             # Report combined stats (accumulated + current file). The fallback
             # counters are included so the Fallbacks stat card updates live.
             stats_callback(_global_stats_payload(
-                effective_total, global_completed, accumulated_stats, file_stats_dict))
+                total_chunks, global_completed, accumulated_stats, file_stats_dict))
 
         # Translate using orchestrator WITH checkpoint support
         doc_root, success, file_stats = await _translate_single_xhtml_file(
@@ -944,20 +930,8 @@ async def _process_all_content_files(
 
         # Report stats if callback provided
         if stats_callback and file_stats:
-            # Calculate effective completed chunks
-            # When refinement is enabled, we need to account for both phases
-            if enable_refinement:
-                # Calculate base completed chunks (without refinement doubling)
-                base_completed = accumulated_stats.successful_first_try + accumulated_stats.successful_after_retry
-                # Add refinement progress if any files have completed refinement
-                # Note: accumulated_stats.refinement_chunks_completed only tracks current file's refinement
-                # We need to add completed_chunks_global (which counts base chunks) + any refinement progress
-                effective_completed = completed_chunks_global + accumulated_stats.refinement_chunks_completed
-            else:
-                effective_completed = completed_chunks_global
-            
             stats_callback(_global_stats_payload(
-                effective_total_chunks, effective_completed, accumulated_stats))
+                effective_total_chunks, completed_chunks_global, accumulated_stats))
 
         # Save the document if translation succeeded
         if success and doc_root is not None:
