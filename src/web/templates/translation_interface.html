@@ -702,13 +702,15 @@
                         <div class="form-group" style="margin-bottom: 0;">
                             <label data-i18n="sample:n_samples_label">Number of samples (N)</label>
                             <div class="neu-inset-light">
-                                <input type="number" class="form-control" id="sampleNSamples" value="5" min="2" max="20">
+                                <!-- Default value seeded from sample-defaults.js (single source) -->
+                                <input type="number" class="form-control" id="sampleNSamples" min="2" max="20">
                             </div>
                         </div>
                         <div class="form-group" style="margin-bottom: 0;">
                             <label data-i18n="sample:max_chars_label">Max chars per sample</label>
                             <div class="neu-inset-light">
-                                <input type="number" class="form-control" id="sampleMaxChars" value="400" min="50" max="2000">
+                                <!-- Default value seeded from sample-defaults.js (single source) -->
+                                <input type="number" class="form-control" id="sampleMaxChars" min="50" max="2000">
                             </div>
                         </div>
                         <button type="button" class="btn btn-secondary" id="sampleUpdateBtn" disabled
@@ -1682,6 +1684,45 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="glossary-preview-cancel" data-i18n="common:close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick LLM test overlay (body filled lazily by quick-test.js) -->
+    <div id="quickTestModal" class="modal-overlay hidden">
+        <div class="modal-content quick-test-content">
+            <div class="modal-header">
+                <div class="quick-test-header-titles">
+                    <h3 style="margin: 0;">
+                        <span class="material-symbols-outlined" style="vertical-align: middle;">science</span>
+                        <span data-i18n="translation:quicktest_title">Quick LLM test</span>
+                        <span id="quickTestSpinner" class="quick-test-spinner hidden" aria-hidden="true"></span>
+                    </h3>
+                    <button type="button" id="quickTestCompareBtn" class="quick-test-compare-link">
+                        <span class="material-symbols-outlined" aria-hidden="true">compare_arrows</span>
+                        <span data-i18n="translation:quicktest_compare">Full test: compare several LLMs</span>
+                        <span class="material-symbols-outlined quick-test-compare-arrow" aria-hidden="true">arrow_forward</span>
+                    </button>
+                </div>
+                <button class="close-btn" id="quickTestCloseBtn" data-i18n-attr="aria-label:common:close" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="quick-test-intro" data-i18n="translation:quicktest_intro">
+                    A quick taste of how the selected LLM translates 5 excerpts from this file, using your current options. No commitment — just a preview before the full run.
+                </p>
+                <div id="quickTestSummary" class="quick-test-summary"></div>
+                <button type="button" id="quickTestGoSettings" class="btn btn-secondary hidden" style="margin-bottom: 12px;">
+                    <span class="material-symbols-outlined">settings</span>
+                    <span data-i18n="translation:quicktest_go_settings">Pick a model in Settings</span>
+                </button>
+                <div id="quickTestBody" class="quick-test-cards"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger hidden" id="quickTestStopBtn">
+                    <span class="material-symbols-outlined">stop_circle</span>
+                    <span data-i18n="translation:quicktest_stop">Stop</span>
+                </button>
+                <button class="btn btn-primary" id="quickTestDoneBtn" data-i18n="common:close">Close</button>
             </div>
         </div>
     </div>

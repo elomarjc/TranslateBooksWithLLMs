@@ -10,6 +10,7 @@ import { ApiClient } from '../core/api-client.js';
 import { MessageLogger } from '../ui/message-logger.js';
 import { DomHelpers } from '../ui/dom-helpers.js';
 import { StatusManager } from '../utils/status-manager.js';
+import { QuickTestManager } from '../translation/quick-test.js';
 import { t } from '../i18n/i18n.js';
 
 const FILE_QUEUE_STORAGE_KEY = 'tbl_file_queue';
@@ -1011,6 +1012,22 @@ export const FileUpload = {
                 }
 
                 header.appendChild(infoSpan);
+
+                // Quick LLM test button — grabs 5 segments from this file and
+                // translates them once with the currently-selected LLM/options,
+                // so the user can eyeball quality before a big run. Queued only.
+                if (file.status === 'Queued') {
+                    const testBtn = document.createElement('button');
+                    testBtn.className = 'file-test-btn';
+                    testBtn.title = t('translation:quicktest_button_title');
+                    testBtn.setAttribute('aria-label', t('translation:quicktest_button_title'));
+                    testBtn.innerHTML = `<span class="material-symbols-outlined">science</span><span class="file-test-btn-label">${DomHelpers.escapeHtml(t('translation:quicktest_button_label'))}</span>`;
+                    testBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        QuickTestManager.open(file);
+                    };
+                    header.appendChild(testBtn);
+                }
 
                 // Remove button
                 const removeBtn = document.createElement('button');

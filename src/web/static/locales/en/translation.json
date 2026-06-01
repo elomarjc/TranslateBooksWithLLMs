@@ -208,5 +208,22 @@
   "summary_ocr_cleanup": "OCR cleanup",
   "summary_glossary": "Glossary: {{name}}",
   "summary_instructions": "Instructions: {{name}}",
-  "summary_lang_auto_detect": "auto-detect"
+  "summary_lang_auto_detect": "auto-detect",
+
+  "quicktest_button_title": "Quick test: translate 5 excerpts with the selected LLM",
+  "quicktest_button_label": "Quick test",
+  "quicktest_title": "Quick LLM test",
+  "quicktest_intro": "A quick taste of how the selected LLM translates 5 excerpts from this file, using your current options. No commitment — just a preview before the full run.",
+  "quicktest_go_settings": "Pick a model in Settings",
+  "quicktest_compare": "Full test: compare several LLMs",
+  "quicktest_stop": "Stop",
+  "quicktest_sampling": "Picking excerpts…",
+  "quicktest_chip_glossary": "Glossary",
+  "quicktest_chip_instructions": "Custom instructions",
+  "quicktest_cell_error": "Translation failed",
+  "quicktest_error_no_file": "This file isn't ready yet — try again once it has finished uploading.",
+  "quicktest_error_no_model": "No model selected. Pick a provider and model first.",
+  "quicktest_error_no_target": "Set a target language for this file before testing.",
+  "quicktest_error_empty": "This file is too small to sample.",
+  "quicktest_error_run": "Quick test failed: {{error}}"
 }

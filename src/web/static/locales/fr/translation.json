@@ -208,5 +208,22 @@
   "summary_ocr_cleanup": "Nettoyage OCR",
   "summary_glossary": "Glossaire : {{name}}",
   "summary_instructions": "Instructions : {{name}}",
-  "summary_lang_auto_detect": "détection auto"
+  "summary_lang_auto_detect": "détection auto",
+
+  "quicktest_button_title": "Test rapide : traduire 5 extraits avec le LLM sélectionné",
+  "quicktest_button_label": "Test rapide",
+  "quicktest_title": "Test rapide du LLM",
+  "quicktest_intro": "Un aperçu rapide de la façon dont le LLM sélectionné traduit 5 extraits de ce fichier, avec vos options actuelles. Sans engagement — juste un coup d'œil avant la traduction complète.",
+  "quicktest_go_settings": "Choisir un modèle dans les Réglages",
+  "quicktest_compare": "Test complet : comparer plusieurs LLM",
+  "quicktest_stop": "Arrêter",
+  "quicktest_sampling": "Sélection des extraits…",
+  "quicktest_chip_glossary": "Glossaire",
+  "quicktest_chip_instructions": "Instructions personnalisées",
+  "quicktest_cell_error": "Échec de la traduction",
+  "quicktest_error_no_file": "Ce fichier n'est pas encore prêt — réessaie une fois l'envoi terminé.",
+  "quicktest_error_no_model": "Aucun modèle sélectionné. Choisis d'abord un fournisseur et un modèle.",
+  "quicktest_error_no_target": "Définis une langue cible pour ce fichier avant de tester.",
+  "quicktest_error_empty": "Ce fichier est trop petit pour être échantillonné.",
+  "quicktest_error_run": "Échec du test rapide : {{error}}"
 }

@@ -20,6 +20,7 @@ import { SettingsManager } from '../core/settings-manager.js';
 import { DomHelpers } from '../ui/dom-helpers.js';
 import { t, applyToDOM } from '../i18n/i18n.js';
 import { SampleTable } from './sample-table.js';
+import { SAMPLE_DEFAULT_N_SAMPLES, SAMPLE_DEFAULT_MAX_CHARS } from './sample-defaults.js';
 import { SearchableSelectFactory } from '../ui/searchable-select.js';
 import {
     PROVIDER_ORDER,
@@ -647,6 +648,23 @@ function setSampleSourceLang(languageValue) {
 }
 
 /**
+ * Set the Sample-tab target-language <select> by language name, matching
+ * options case-insensitively. Returns false if the language isn't an option.
+ */
+function setSampleTargetLang(languageValue) {
+    const select = $('sampleTargetLang');
+    if (!select || !languageValue || languageValue === 'Other') return false;
+    for (const opt of select.options) {
+        if (opt.value && opt.value.toLowerCase() === languageValue.toLowerCase()) {
+            select.value = opt.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * Auto-detect the source language of the uploaded file and reflect it in the
  * source-language picker, so the user sees the detection immediately on drop
  * instead of leaving it on "Auto-detect". Best-effort: only applies on a
@@ -791,8 +809,8 @@ async function refreshSampleSet() {
 
 async function _runInitialize({ preserveContext }) {
     const warningsBox = $('sampleWarnings');
-    const nSamples = parseInt($('sampleNSamples')?.value, 10) || 5;
-    const maxChars = parseInt($('sampleMaxChars')?.value, 10) || 180;
+    const nSamples = parseInt($('sampleNSamples')?.value, 10) || SAMPLE_DEFAULT_N_SAMPLES;
+    const maxChars = parseInt($('sampleMaxChars')?.value, 10) || SAMPLE_DEFAULT_MAX_CHARS;
 
     try {
         const r = await fetch('/api/sample/initialize', {
@@ -857,7 +875,7 @@ async function addSample() {
         showSampleMessage(t('sample:error_no_file'), 'error');
         return;
     }
-    const maxChars = parseInt($('sampleMaxChars')?.value, 10) || 180;
+    const maxChars = parseInt($('sampleMaxChars')?.value, 10) || SAMPLE_DEFAULT_MAX_CHARS;
     const excludeIndices = Array.isArray(state.lastItems)
         ? state.lastItems.map((it) => it.index)
         : [];
@@ -898,8 +916,8 @@ async function addSample() {
 function buildRunPayload({ defer = false } = {}) {
     const sourceLang = $('sampleSourceLang')?.value || '';
     const targetLang = $('sampleTargetLang')?.value || '';
-    const nSamples = parseInt($('sampleNSamples')?.value, 10) || 5;
-    const maxChars = parseInt($('sampleMaxChars')?.value, 10) || 180;
+    const nSamples = parseInt($('sampleNSamples')?.value, 10) || SAMPLE_DEFAULT_N_SAMPLES;
+    const maxChars = parseInt($('sampleMaxChars')?.value, 10) || SAMPLE_DEFAULT_MAX_CHARS;
 
     const columns = state.columns.map((col) => ({
         provider: col.provider,
@@ -1182,6 +1200,42 @@ function onFileSelected(file) {
 }
 
 /**
+ * Adopt a file that is ALREADY uploaded to the server — handed over from the
+ * Translate tab's quick-test "Compare" action. Skips the drop + upload step
+ * entirely: the path is set directly and the sample cards are initialized.
+ *
+ * Languages are seeded from the caller (the user's per-file choice in the
+ * Translate queue) instead of auto-detected, so the carry-over is faithful.
+ */
+async function loadServerFile(info) {
+    if (!info || !info.filePath) return;
+    state.file = { name: info.name || 'file', size: info.size || 0 };
+    state.uploadedPath = info.filePath;
+    state.fileType = info.fileType || null;
+    state.thumbnail = info.thumbnail || null;
+    state.lastItems = null;
+    state.lastRunContext = null;
+    state.currentSampleId = null;
+    state.currentRunKeys = new Map();
+    state.appliedNSamples = null;
+    state.appliedMaxChars = null;
+
+    updateFileCard();
+    showFileCardMode(true);
+
+    if (info.sourceLanguage) setSampleSourceLang(info.sourceLanguage);
+    if (info.targetLanguage) setSampleTargetLang(info.targetLanguage);
+
+    const warningsBox = $('sampleWarnings');
+    if (warningsBox) warningsBox.innerHTML = '';
+    const results = $('sampleResults');
+    if (results) {
+        results.innerHTML = `<p class="sample-empty" data-i18n="sample:initializing">${t('sample:initializing')}</p>`;
+    }
+    await _runInitialize({ preserveContext: false });
+}
+
+/**
  * Clear the selected file: reset all sample state, switch the UI back to the
  * dropzone, and wipe the result table. Triggered by the X button on the file
  * card. No-op while a Run is in flight.
@@ -1313,6 +1367,12 @@ export const SampleManager = {
         // shared SearchableSelect ids.
         if (state.columns.length === 0) addColumn();
         else renderColumns();
+        // Seed the N / max-chars inputs from the shared defaults so the constant
+        // is the single source — the HTML no longer hard-codes its own value.
+        const nInput = $('sampleNSamples');
+        if (nInput && !nInput.value) nInput.value = String(SAMPLE_DEFAULT_N_SAMPLES);
+        const maxInput = $('sampleMaxChars');
+        if (maxInput && !maxInput.value) maxInput.value = String(SAMPLE_DEFAULT_MAX_CHARS);
         wireFileInput();
         wireButtons();
         rerenderOnLocale();
@@ -1330,4 +1390,5 @@ export const SampleManager = {
     stop: stopSample,
     copyAsMarkdown,
     reset,
+    loadServerFile,
 };

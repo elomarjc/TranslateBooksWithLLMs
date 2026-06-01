@@ -44,6 +44,7 @@ import { TranslationTracker } from './translation/translation-tracker.js';
 import { BatchController } from './translation/batch-controller.js';
 import { ProgressManager } from './translation/progress-manager.js';
 import { ResumeManager } from './translation/resume-manager.js';
+import { QuickTestManager } from './translation/quick-test.js';
 
 // ========================================
 // Utilities
@@ -444,6 +445,7 @@ async function initializeModules() {
     //    network calls; failures are logged and the UI stays usable.
     TTSManager.initialize();
     SampleManager.init();
+    QuickTestManager.init();
     TranslationTracker.initialize().catch((error) => {
         console.error('TranslationTracker initialization failed:', error);
     });

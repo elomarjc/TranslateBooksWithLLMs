@@ -3784,3 +3784,144 @@ html.dark .sample-badge-fallback {
     100% { background-position: -200% 0; }
 }
 
+/* ========================================
+   Quick LLM test (per-file, Translate tab)
+   ======================================== */
+
+/* Flask pill on each Selected-Files row (icon + label), grouped with remove. */
+.file-test-btn {
+    margin-left: auto;
+    padding: 4px 10px 4px 8px;
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    background: rgba(99, 102, 241, 0.10);
+    color: #4f46e5;
+    cursor: pointer;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.4;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+.file-test-btn + .file-remove-btn { margin-left: 8px; }
+.file-test-btn:hover {
+    background: rgba(99, 102, 241, 0.18);
+    border-color: rgba(99, 102, 241, 0.55);
+}
+.file-test-btn .material-symbols-outlined { font-size: 16px; }
+html.dark .file-test-btn { color: #a5b4fc; }
+
+.quick-test-content { max-width: 720px; }
+
+/* Header: title stacked over the "full test" hand-off link. */
+.quick-test-header-titles {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.quick-test-compare-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    align-self: flex-start;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--primary-light, #4f46e5);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+.quick-test-compare-link:hover { opacity: 0.75; }
+.quick-test-compare-link .material-symbols-outlined { font-size: 1rem; }
+.quick-test-compare-link .quick-test-compare-arrow { transition: transform 0.15s ease; }
+.quick-test-compare-link:hover .quick-test-compare-arrow { transform: translateX(3px); }
+
+.quick-test-intro {
+    margin: 0 0 1rem;
+    color: var(--text-muted-light);
+    font-size: 0.9rem;
+}
+
+.quick-test-summary {
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border-light);
+    border-radius: 0.75rem;
+    background: var(--background-outer);
+}
+.quick-test-summary-llm {
+    color: var(--text-dark);
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+.quick-test-summary-sep { opacity: 0.5; }
+.quick-test-chips {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.quick-test-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: rgba(99, 102, 241, 0.18);
+    color: #4f46e5;
+    border: 1px solid rgba(99, 102, 241, 0.45);
+}
+
+.quick-test-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.quick-test-card {
+    border: 1px solid var(--border-light);
+    border-radius: 0.75rem;
+    padding: 12px 14px;
+    background: var(--background-light);
+}
+.quick-test-source {
+    color: var(--text-muted-light);
+    font-size: 0.85rem;
+    font-style: italic;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+    border-bottom: 1px dashed var(--border-light);
+    white-space: pre-wrap;
+}
+.quick-test-result .sample-output { font-size: 0.9rem; }
+
+.quick-test-loading,
+.quick-test-error {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--text-muted-light);
+    font-size: 0.9rem;
+}
+.quick-test-error { color: #dc2626; }
+
+.quick-test-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-left: 6px;
+    border: 2px solid var(--border-light);
+    border-top-color: #4f46e5;
+    border-radius: 50%;
+    vertical-align: middle;
+    animation: spin 0.8s linear infinite;
+}
+

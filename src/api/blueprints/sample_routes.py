@@ -41,6 +41,12 @@ from src.utils.language_detector import LanguageDetector
 # hammering providers; this is enforced per sample run via an asyncio.Semaphore.
 SAMPLE_CONCURRENCY_CAP = 8
 
+# Sampling defaults used when a request omits the fields (safety net — both
+# front-ends always send explicit values). Must mirror the frontend single
+# source in src/web/static/js/sample/sample-defaults.js.
+DEFAULT_N_SAMPLES = 5
+DEFAULT_MAX_CHARS = 400
+
 logger = logging.getLogger(__name__)
 
 
@@ -662,6 +668,15 @@ def _spawn_sample_thread(coro_factory):
         try:
             loop.run_until_complete(coro_factory())
         finally:
+            # Finalize any async generators still open (e.g. the httpx streaming
+            # response behind `async for line in response.aiter_lines()` in the
+            # LLM providers) before closing the loop. Without this, their cleanup
+            # tasks are destroyed mid-flight and asyncio logs
+            # "Task was destroyed but it is pending!". Mirrors glossary_routes.
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
             loop.close()
     thread = threading.Thread(target=runner, daemon=True)
     thread.start()
@@ -710,8 +725,8 @@ def create_sample_blueprint(sample_state_manager, socketio=None):
             return err
 
         try:
-            n_samples = _clamp_int(data.get("n_samples"), 5, 2, 20)
-            max_chars = _clamp_int(data.get("max_chars"), 180, 50, 2000)
+            n_samples = _clamp_int(data.get("n_samples"), DEFAULT_N_SAMPLES, 2, 20)
+            max_chars = _clamp_int(data.get("max_chars"), DEFAULT_MAX_CHARS, 50, 2000)
         except (TypeError, ValueError):
             return jsonify({"error": "n_samples and max_chars must be integers"}), 400
 
@@ -750,7 +765,7 @@ def create_sample_blueprint(sample_state_manager, socketio=None):
             return err
 
         try:
-            max_chars = _clamp_int(data.get("max_chars"), 180, 50, 2000)
+            max_chars = _clamp_int(data.get("max_chars"), DEFAULT_MAX_CHARS, 50, 2000)
         except (TypeError, ValueError):
             return jsonify({"error": "max_chars must be an integer"}), 400
 
@@ -810,8 +825,8 @@ def create_sample_blueprint(sample_state_manager, socketio=None):
             return jsonify({"error": f"Invalid mode: {mode}"}), 400
 
         try:
-            n_samples = _clamp_int(data.get("n_samples"), 5, 2, 20)
-            max_chars = _clamp_int(data.get("max_chars"), 180, 50, 2000)
+            n_samples = _clamp_int(data.get("n_samples"), DEFAULT_N_SAMPLES, 2, 20)
+            max_chars = _clamp_int(data.get("max_chars"), DEFAULT_MAX_CHARS, 50, 2000)
         except (TypeError, ValueError):
             return jsonify({"error": "n_samples and max_chars must be integers"}), 400
 
