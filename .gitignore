@@ -4,6 +4,10 @@ __pycache__/
 /DoNotCommit/
 /translated_files/
 /data/
+deployment/data/
+deployment/translated_files/
+deployment/logs/
+**/jobs.db
 .claude/
 .env
 .env.*
