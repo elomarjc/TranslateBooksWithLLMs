@@ -59,53 +59,46 @@ _KEY_PROVIDERS = ('gemini', 'openai', 'openrouter', 'mistral', 'deepseek', 'poe'
 _ENDPOINT_PROVIDERS = ('ollama', 'openai')
 
 
-def _apply_resume_overrides(config, overrides):
-    """Merge optional model/provider override fields into a resume config in place.
+def _strip_api_keys(config):
+    """Remove every API key from a config dict in place (for API responses).
 
-    Lets the resume request switch model/provider for the remaining chunks
-    (issue #183). An empty/absent body leaves `config` untouched, so existing
-    behavior is preserved. API keys flow through `_resolve_api_key` exactly like
-    the start endpoint, and a multi-key string is passed through unchanged so the
-    key-rotation pool still works.
-
-    Returns a Flask (response, status) tuple to abort with on validation failure,
-    or None on success.
+    Persisted checkpoints no longer hold keys (issue #213), but the in-memory
+    config of a live job does — it must never be echoed back to the browser,
+    since '__USE_ENV__' requests get their key resolved from .env server-side.
     """
-    if not isinstance(overrides, dict) or not overrides:
-        return None
+    if isinstance(config, dict):
+        for key in [k for k in config if k == 'api_key' or k.endswith('_api_key')]:
+            config.pop(key, None)
+    return config
 
-    if overrides.get('model'):
-        config['model'] = overrides['model']
-    if overrides.get('llm_provider'):
-        config['llm_provider'] = str(overrides['llm_provider']).lower()
-    if overrides.get('llm_api_endpoint'):
-        config['llm_api_endpoint'] = overrides['llm_api_endpoint']
-    if overrides.get('context_window') is not None:
-        try:
-            config['context_window'] = int(overrides['context_window'])
-        except (TypeError, ValueError):
-            return jsonify({"error": "context_window must be an integer"}), 400
 
+def _validate_provider_credentials(config):
+    """Check that the provider in `config` has what it needs to run.
+
+    A cloud provider needs a key from the config (resume override or live
+    request) or from .env; an endpoint-driven provider needs an endpoint.
+    Persisted checkpoints carry no keys (issue #213), so for a resumed job
+    .env is the normal source — this guard turns a missing key into an
+    immediate 400 instead of a mid-translation failure.
+
+    Returns a Flask (response, status) tuple on failure, or None on success.
+    """
     provider = (config.get('llm_provider') or 'ollama').lower()
 
-    # A single generic api_key override maps to the chosen provider's key field,
-    # resolved through .env like every other entry point.
-    raw_key = overrides.get('api_key')
-    if provider in _KEY_PROVIDERS and raw_key not in (None, ''):
-        env_var = f"{provider.upper()}_API_KEY"
-        config[f"{provider}_api_key"] = _resolve_api_key(raw_key, env_var)
-
-    # A cloud provider needs a key from the override, the restored config, or .env.
     if provider in _KEY_PROVIDERS:
         env_var = f"{provider.upper()}_API_KEY"
-        if not (config.get(f"{provider}_api_key") or os.getenv(env_var)):
+        # 'openai' also covers OpenAI-compatible local endpoints (llama.cpp,
+        # LM Studio, vLLM) where a key is legitimately absent — only require
+        # one for the official API, mirroring the factory's heuristic.
+        key_required = (provider != 'openai'
+                        or 'api.openai.com' in (config.get('llm_api_endpoint') or ''))
+        if key_required and not (config.get(f"{provider}_api_key") or os.getenv(env_var)):
             return jsonify({
                 "error": "Missing API key for provider",
                 "message": (f"Resuming with '{provider}' requires an API key. "
                             f"Set {env_var} in .env or include it in the request."),
             }), 400
 
-    # Endpoint-driven providers need an endpoint to talk to.
     if provider in _ENDPOINT_PROVIDERS and not config.get('llm_api_endpoint'):
         return jsonify({
             "error": "Missing API endpoint for provider",
@@ -113,6 +106,45 @@ def _apply_resume_overrides(config, overrides):
         }), 400
 
     return None
+
+
+def _apply_resume_overrides(config, overrides):
+    """Merge optional model/provider override fields into a resume config in place.
+
+    Lets the resume request switch model/provider for the remaining chunks
+    (issue #183). An empty/absent body leaves `config` untouched. API keys flow
+    through `_resolve_api_key` exactly like the start endpoint, and a multi-key
+    string is passed through unchanged so the key-rotation pool still works.
+
+    Credentials are validated even with an empty body: checkpoints no longer
+    persist API keys (issue #213), so every resume must find its key in .env
+    or in the request.
+
+    Returns a Flask (response, status) tuple to abort with on validation failure,
+    or None on success.
+    """
+    if isinstance(overrides, dict) and overrides:
+        if overrides.get('model'):
+            config['model'] = overrides['model']
+        if overrides.get('llm_provider'):
+            config['llm_provider'] = str(overrides['llm_provider']).lower()
+        if overrides.get('llm_api_endpoint'):
+            config['llm_api_endpoint'] = overrides['llm_api_endpoint']
+        if overrides.get('context_window') is not None:
+            try:
+                config['context_window'] = int(overrides['context_window'])
+            except (TypeError, ValueError):
+                return jsonify({"error": "context_window must be an integer"}), 400
+
+        # A single generic api_key override maps to the chosen provider's key
+        # field, resolved through .env like every other entry point.
+        provider = (config.get('llm_provider') or 'ollama').lower()
+        raw_key = overrides.get('api_key')
+        if provider in _KEY_PROVIDERS and raw_key not in (None, ''):
+            env_var = f"{provider.upper()}_API_KEY"
+            config[f"{provider}_api_key"] = _resolve_api_key(raw_key, env_var)
+
+    return _validate_provider_credentials(config)
 
 
 def create_translation_blueprint(state_manager, start_translation_job, output_dir):
@@ -210,7 +242,9 @@ def create_translation_blueprint(state_manager, start_translation_job, output_di
         return jsonify({
             "translation_id": translation_id,
             "message": "Translation queued.",
-            "config_received": config
+            # Strip keys from a copy — `config` is the live job's dict, and a
+            # '__USE_ENV__' request must not get the resolved .env key back.
+            "config_received": _strip_api_keys(dict(config))
         })
 
     @bp.route('/api/translation/<translation_id>', methods=['GET'])
@@ -247,7 +281,7 @@ def create_translation_blueprint(state_manager, start_translation_job, output_di
             "logs": job_data.get('logs', [])[-100:],
             "result_preview": "[Preview functionality removed. Download file to view content.]" if job_data.get('status') in ['completed', 'interrupted', 'partial'] else None,
             "error": job_data.get('error'),
-            "config": job_data.get('config'),
+            "config": _strip_api_keys(dict(job_data['config'])) if job_data.get('config') else None,
             "output_filepath": job_data.get('output_filepath')
         })
 
@@ -288,16 +322,13 @@ def create_translation_blueprint(state_manager, start_translation_job, output_di
     def list_resumable_jobs():
         """List all jobs that can be resumed.
 
-        Each job carries its full `config`, which holds resolved API keys. Strip
-        every '*_api_key' before sending it to the browser — the resume endpoint
-        reads keys server-side from the checkpoint, so the client never needs them.
+        Persisted checkpoints no longer hold API keys (issue #213), but strip
+        defensively anyway — the resume endpoint resolves keys server-side from
+        .env or the request body, so the client never needs them.
         """
         resumable_jobs = state_manager.get_resumable_jobs()
         for job in resumable_jobs:
-            cfg = job.get('config')
-            if isinstance(cfg, dict):
-                for key in [k for k in cfg if k.endswith('_api_key')]:
-                    cfg.pop(key, None)
+            _strip_api_keys(job.get('config'))
         return jsonify({"resumable_jobs": resumable_jobs})
 
     @bp.route('/api/resume/<translation_id>', methods=['POST'])

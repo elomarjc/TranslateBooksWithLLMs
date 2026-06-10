@@ -11,6 +11,22 @@ from datetime import datetime
 import threading
 
 
+def sanitize_config_secrets(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return a copy of a job config with every API key removed.
+
+    The jobs database must never be a secret-bearing artifact (issue #213):
+    it lives on disk unencrypted and is bind-mounted by docker-compose. Keys
+    are therefore stripped before persistence and re-resolved at resume time
+    from the environment (the LLM factory falls back to <PROVIDER>_API_KEY
+    when the config value is empty) or from the resume request body.
+    """
+    return {
+        k: v for k, v in config.items()
+        if not (k == 'api_key' or k.endswith('_api_key'))
+    }
+
+
 class Database:
     """
     Manages SQLite database for translation job checkpoints.
@@ -151,7 +167,7 @@ class Database:
                     translation_id,
                     'running',
                     file_type,
-                    json.dumps(config),
+                    json.dumps(sanitize_config_secrets(config)),
                     json.dumps(progress),
                     server_session_id
                 ))
@@ -353,7 +369,7 @@ class Database:
 
                 cursor.execute(
                     "UPDATE translation_jobs SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE translation_id = ?",
-                    (json.dumps(config), translation_id)
+                    (json.dumps(sanitize_config_secrets(config)), translation_id)
                 )
                 conn.commit()
                 return cursor.rowcount > 0

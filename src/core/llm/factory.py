@@ -9,6 +9,7 @@ import os
 
 from src.config import (
     API_ENDPOINT, DEFAULT_MODEL, OLLAMA_NUM_CTX,
+    OPENAI_API_KEY,
     OPENROUTER_API_KEY, OPENROUTER_MODEL,
     MISTRAL_API_KEY, MISTRAL_MODEL, MISTRAL_API_ENDPOINT,
     DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_API_ENDPOINT,
@@ -95,7 +96,11 @@ def create_llm_provider(provider_type: str = "ollama", **kwargs) -> LLMProvider:
         return OpenAICompatibleProvider(
             api_endpoint=api_endpoint,
             model=kwargs.get("model", DEFAULT_MODEL),
-            api_key=kwargs.get("api_key") or kwargs.get("openai_api_key"),
+            # Env fallback matters for resume: checkpoints carry no keys
+            # (issue #213). Key stays optional — local OpenAI-compatible
+            # endpoints (llama.cpp, LM Studio, vLLM) don't need one.
+            api_key=kwargs.get("api_key") or kwargs.get("openai_api_key")
+            or os.getenv("OPENAI_API_KEY", OPENAI_API_KEY),
             context_window=kwargs.get("context_window") or OLLAMA_NUM_CTX,
             log_callback=kwargs.get("log_callback"),
             provider_name=pname,

@@ -41,7 +41,9 @@ class CheckpointManager:
         Args:
             translation_id: Unique job identifier
             file_type: Type of file (txt, srt, epub)
-            config: Full translation configuration
+            config: Full translation configuration. API keys are stripped at
+                persistence (issue #213) — resume re-resolves them from .env
+                or the resume request, never from the database.
             input_file_path: Path to input file (will be preserved if it's a temp file)
 
         Returns:
