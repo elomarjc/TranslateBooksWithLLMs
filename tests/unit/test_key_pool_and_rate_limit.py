@@ -153,21 +153,22 @@ class TestIsRetryableHttpStatus:
 class TestHandleRateLimit:
     @pytest.mark.asyncio
     async def test_single_key_sleeps_then_raises(self):
+        # Budget for 1 key x max_attempts=2 is 2 rate-limit events.
         pool = KeyPool(["only"], provider_name="prov")
-        # First call: not last attempt, should sleep ~1s and return
+        # First 429: budget remains, should sleep ~1s and return
         start = time.monotonic()
         await handle_rate_limit(
             pool, "only", {"Retry-After": "1"},
-            attempt=0, max_attempts=2,
+            rate_limit_events=1, max_attempts=2,
         )
         elapsed = time.monotonic() - start
         assert 0.9 <= elapsed <= 1.5, f"expected ~1s sleep, got {elapsed:.2f}"
 
-        # Second call: last attempt, should raise
+        # Second 429: budget exhausted, should raise
         with pytest.raises(RateLimitError) as exc_info:
             await handle_rate_limit(
                 pool, "only", {"Retry-After": "1"},
-                attempt=1, max_attempts=2,
+                rate_limit_events=2, max_attempts=2,
             )
         assert exc_info.value.provider == "prov"
         assert exc_info.value.retry_after == 1
@@ -182,16 +183,30 @@ class TestHandleRateLimit:
         start = time.monotonic()
         await handle_rate_limit(
             pool, "k1", {"Retry-After": "30"},
-            attempt=0, max_attempts=2, log_callback=cb,
+            rate_limit_events=1, max_attempts=2, log_callback=cb,
         )
         elapsed = time.monotonic() - start
         assert elapsed < 0.1, "rotation should not sleep"
         assert any(event == "llm_key_rotated" for event, _ in captured)
 
     @pytest.mark.asyncio
-    async def test_all_throttled_last_attempt_raises(self):
+    async def test_rotation_allowed_for_every_key_in_pool(self):
+        """A 3-key pool with max_attempts=2 (budget=4) must allow rotating
+        through keys #2 and #3 without raising — the core of issue #217."""
+        pool = KeyPool(["k1", "k2", "k3"], provider_name="prov")
+        for events, key in ((1, "k1"), (2, "k2")):
+            start = time.monotonic()
+            await handle_rate_limit(
+                pool, key, {"Retry-After": "30"},
+                rate_limit_events=events, max_attempts=2,
+            )
+            assert time.monotonic() - start < 0.1, "rotation should not sleep"
+        assert await pool.acquire() == "k3"
+
+    @pytest.mark.asyncio
+    async def test_budget_exhausted_raises(self):
         pool = KeyPool(["k1", "k2"], provider_name="prov")
-        # Manually throttle both keys with long retry-after
+        # Budget for 2 keys x max_attempts=2 is 3 rate-limit events.
         now = time.monotonic()
         await pool.mark_throttled("k1", now + 60)
         await pool.mark_throttled("k2", now + 60)
@@ -199,11 +214,106 @@ class TestHandleRateLimit:
         with pytest.raises(RateLimitError) as exc_info:
             await handle_rate_limit(
                 pool, "k1", {"Retry-After": "60"},
-                attempt=1, max_attempts=2,
+                rate_limit_events=3, max_attempts=2,
             )
         msg = str(exc_info.value)
-        assert "all 2 key(s)" in msg
+        assert "2 key(s)" in msg
         assert exc_info.value.provider == "prov"
+
+
+# ---------------------------------------------------------------------------
+# Provider retry loop x key rotation (issue #217)
+# ---------------------------------------------------------------------------
+
+class _FakeSuccessResponse:
+    """Minimal stand-in for a 200 httpx.Response from the Gemini API."""
+    status_code = 200
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {
+            "candidates": [{
+                "content": {"parts": [{"text": "translated"}]},
+                "finishReason": "STOP",
+            }],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1},
+        }
+
+
+def _make_429_error(url: str):
+    import httpx
+    request = httpx.Request("POST", url)
+    response = httpx.Response(
+        429, headers={"Retry-After": "1"}, request=request
+    )
+    return httpx.HTTPStatusError("429", request=request, response=response)
+
+
+class TestRotationDoesNotConsumeAttempts:
+    """Regression tests for issue #217: key rotation on 429 must not burn the
+    transient-retry attempt counter. With the default MAX_TRANSLATION_ATTEMPTS=2
+    and a 3-key pool, the old code never tried key #3 and never raised
+    RateLimitError (so the pipeline auto-pause never engaged)."""
+
+    def _make_provider(self, monkeypatch, keys, responder):
+        from src.core.llm.providers import gemini as gemini_mod
+        monkeypatch.setattr(gemini_mod, "MAX_TRANSLATION_ATTEMPTS", 2)
+        provider = gemini_mod.GeminiProvider(api_key=keys)
+
+        used_keys = []
+
+        class FakeClient:
+            async def post(self, url, headers=None, json=None, timeout=None):
+                key = headers["x-goog-api-key"]
+                used_keys.append(key)
+                return responder(url, key)
+
+        async def fake_get_client():
+            return FakeClient()
+
+        monkeypatch.setattr(provider, "_get_client", fake_get_client)
+        return provider, used_keys
+
+    @pytest.mark.asyncio
+    async def test_spare_key_is_tried_after_two_429s(self, monkeypatch):
+        """Keys #1 and #2 are rate-limited, key #3 works: the chunk must be
+        translated, not silently dropped."""
+        def responder(url, key):
+            if key in ("k1", "k2"):
+                raise _make_429_error(url)
+            return _FakeSuccessResponse()
+
+        provider, used_keys = self._make_provider(
+            monkeypatch, ["k1", "k2", "k3"], responder
+        )
+        result = await provider.generate("hello")
+
+        assert result is not None, (
+            "generate() returned None even though a non-throttled key "
+            "remained in the pool (issue #217)"
+        )
+        assert result.content == "translated"
+        assert "k3" in used_keys
+
+    @pytest.mark.asyncio
+    async def test_exhausted_pool_raises_rate_limit_error(self, monkeypatch):
+        """When every key keeps returning 429, generate() must raise
+        RateLimitError (pipeline auto-pause), not return None."""
+        def responder(url, key):
+            raise _make_429_error(url)
+
+        provider, used_keys = self._make_provider(
+            monkeypatch, ["k1", "k2", "k3"], responder
+        )
+
+        with pytest.raises(RateLimitError):
+            await provider.generate("hello")
+
+        assert {"k1", "k2", "k3"} <= set(used_keys), (
+            f"every key in the pool should be tried, got {used_keys}"
+        )
 
 
 # ---------------------------------------------------------------------------

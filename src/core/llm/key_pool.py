@@ -32,9 +32,12 @@ class _KeyState:
 class KeyPool:
     """Round-robin pool of API keys with per-key throttle tracking.
 
-    Typical usage from a provider:
+    Typical usage from a provider (note the two separate counters — rotating
+    on 429 must not consume a transient-retry attempt, see issue #217):
 
-        for attempt in range(MAX_TRANSLATION_ATTEMPTS):
+        attempt = 0
+        rate_limit_events = 0
+        while attempt < MAX_TRANSLATION_ATTEMPTS:
             current_key = await self._key_pool.acquire()
             headers = {"Authorization": f"Bearer {current_key}"}
             try:
@@ -42,8 +45,13 @@ class KeyPool:
                 ...
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429:
-                    await handle_rate_limit(self._key_pool, current_key, ...)
+                    rate_limit_events += 1
+                    await handle_rate_limit(
+                        self._key_pool, current_key, e.response.headers,
+                        rate_limit_events, MAX_TRANSLATION_ATTEMPTS,
+                    )
                     continue
+                attempt += 1
                 ...
     """
 

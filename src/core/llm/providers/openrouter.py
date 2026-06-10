@@ -237,7 +237,11 @@ class OpenRouterProvider(LLMProvider):
         }
 
         client = await self._get_client()
-        for attempt in range(MAX_TRANSLATION_ATTEMPTS):
+        # 429s have their own budget (rate_limit_events): rotating to a spare
+        # key must not consume a transient-retry attempt (issue #217).
+        attempt = 0
+        rate_limit_events = 0
+        while attempt < MAX_TRANSLATION_ATTEMPTS:
             current_key = await self._key_pool.acquire()
             headers = {
                 "Authorization": f"Bearer {current_key}",
@@ -311,7 +315,8 @@ class OpenRouterProvider(LLMProvider):
 
             except httpx.TimeoutException as e:
                 print(f"OpenRouter API Timeout (attempt {attempt + 1}/{MAX_TRANSLATION_ATTEMPTS}): {e}")
-                if attempt < MAX_TRANSLATION_ATTEMPTS - 1:
+                attempt += 1
+                if attempt < MAX_TRANSLATION_ATTEMPTS:
                     await asyncio.sleep(2)
                     continue
                 return None
@@ -323,9 +328,10 @@ class OpenRouterProvider(LLMProvider):
                     error_message = f"{e} - {error_body}"
 
                 if e.response.status_code == 429:
+                    rate_limit_events += 1
                     await handle_rate_limit(
                         self._key_pool, current_key, e.response.headers,
-                        attempt, MAX_TRANSLATION_ATTEMPTS,
+                        rate_limit_events, MAX_TRANSLATION_ATTEMPTS,
                     )
                     continue
 
@@ -352,19 +358,22 @@ class OpenRouterProvider(LLMProvider):
                 if not is_retryable_http_status(e.response.status_code):
                     return None
 
-                if attempt < MAX_TRANSLATION_ATTEMPTS - 1:
+                attempt += 1
+                if attempt < MAX_TRANSLATION_ATTEMPTS:
                     await asyncio.sleep(2)
                     continue
                 return None
             except json.JSONDecodeError as e:
                 print(f"OpenRouter API JSON Decode Error (attempt {attempt + 1}/{MAX_TRANSLATION_ATTEMPTS}): {e}")
-                if attempt < MAX_TRANSLATION_ATTEMPTS - 1:
+                attempt += 1
+                if attempt < MAX_TRANSLATION_ATTEMPTS:
                     await asyncio.sleep(2)
                     continue
                 return None
             except Exception as e:
                 print(f"OpenRouter API Unknown Error (attempt {attempt + 1}/{MAX_TRANSLATION_ATTEMPTS}): {e}")
-                if attempt < MAX_TRANSLATION_ATTEMPTS - 1:
+                attempt += 1
+                if attempt < MAX_TRANSLATION_ATTEMPTS:
                     await asyncio.sleep(2)
                     continue
                 return None
