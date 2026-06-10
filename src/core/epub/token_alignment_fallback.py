@@ -110,43 +110,44 @@ class TokenAlignmentFallback:
         self,
         text: str,
         placeholders: List[str]
-    ) -> List[Tuple[int, int, str]]:
+    ) -> List[Tuple[int, str]]:
         """
-        Find positions of each placeholder in original text.
+        Find the clean-text offset of each placeholder.
+
+        Offsets are measured in the text WITH all placeholders removed
+        (the cumulative length of preceding placeholders is subtracted),
+        so dividing by len(clean_text) yields a ratio in [0.0, 1.0].
 
         Args:
             text: Text with placeholders
-            placeholders: List of placeholder strings
+            placeholders: List of placeholder strings, in document order
 
         Returns:
-            List of (start_pos, end_pos, placeholder) tuples
+            List of (clean_pos, placeholder) tuples
         """
         positions = []
-        remaining_text = text
-        offset = 0
+        search_from = 0
+        removed_length = 0
 
         for ph in placeholders:
-            idx = remaining_text.find(ph)
+            idx = text.find(ph, search_from)
             if idx != -1:
-                actual_start = offset + idx
-                actual_end = actual_start + len(ph)
-                positions.append((actual_start, actual_end, ph))
-
-                remaining_text = remaining_text[idx + len(ph):]
-                offset += idx + len(ph)
+                positions.append((idx - removed_length, ph))
+                search_from = idx + len(ph)
+                removed_length += len(ph)
 
         return positions
 
     def _calculate_relative_positions(
         self,
-        positions: List[Tuple[int, int, str]],
+        positions: List[Tuple[int, str]],
         text_length: int
     ) -> List[Tuple[float, str]]:
         """
         Calculate relative positions (0.0 to 1.0) for each placeholder.
 
         Args:
-            positions: List of (start, end, placeholder) tuples
+            positions: List of (clean_pos, placeholder) tuples
             text_length: Length of clean text (without placeholders)
 
         Returns:
@@ -157,11 +158,11 @@ class TokenAlignmentFallback:
             if len(positions) == 0:
                 return []
             step = 1.0 / max(1, len(positions) + 1)
-            return [(i * step, ph) for i, (_, _, ph) in enumerate(positions)]
+            return [(i * step, ph) for i, (_, ph) in enumerate(positions)]
 
         relative = []
-        for start, end, ph in positions:
-            rel_pos = start / text_length
+        for pos, ph in positions:
+            rel_pos = min(1.0, max(0.0, pos / text_length))
             relative.append((rel_pos, ph))
 
         return relative
@@ -354,17 +355,12 @@ class TokenAlignmentFallback:
             elif len(placeholders) == 2:
                 return placeholders[0] + translated_without_placeholders + placeholders[1]
             else:
-                # More complex: distribute evenly
-                result = placeholders[0] + translated_without_placeholders + placeholders[-1]
-                # Insert middle placeholders at approximate positions
-                words = translated_without_placeholders.split()
-                if words:
-                    step = len(words) / (len(placeholders) - 1)
-                    parts = [placeholders[0]]
-                    for i in range(1, len(placeholders) - 1):
-                        word_idx = int(i * step)
-                        # This is simplified; the real algorithm is more sophisticated
-                    parts.append(translated_without_placeholders)
-                    parts.append(placeholders[-1])
-                    result = ''.join(parts)
+                # Distribute all placeholders at proportional character
+                # positions; insert from the end so earlier offsets stay valid
+                text = translated_without_placeholders
+                last = len(placeholders) - 1
+                result = text
+                for i, ph in reversed(list(enumerate(placeholders))):
+                    pos = round(i * len(text) / last)
+                    result = result[:pos] + ph + result[pos:]
                 return result
